@@ -43,6 +43,20 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)deleteSelectedRows; // calling it again on deleted rows restores them
 - (void)discardChanges;
 
+// Columns with a foreign key. Their values get a ↗ that calls onOpenReference; editing them calls onPickReference
+// (instead of a text field) so the caller can offer a search in the referenced table. Rects are in `table` coordinates.
+@property (nonatomic, copy) NSIndexSet *referenceColumns;
+@property (nonatomic, copy, nullable) void (^onOpenReference)(NSInteger row, NSInteger column, NSRect cellRect);
+@property (nonatomic, copy, nullable) void (^onPickReference)(NSInteger row, NSInteger column, NSRect cellRect);
+
+// Column index → TBValueKind (see DatePicker.h). Booleans show a checkbox that toggles (click on it, double-click,
+// Enter); date/time columns call onPickDate instead of inline editing.
+@property (nonatomic, copy) NSDictionary<NSNumber *, NSString *> *columnKinds;
+@property (nonatomic, copy, nullable) void (^onPickDate)(NSInteger row, NSInteger column, NSRect cellRect, NSString *kind);
+
+// Cells whose value looks like an image (see ImageValueDetected) get a 🖼 badge; it, double-click and Enter call this.
+@property (nonatomic, copy, nullable) void (^onOpenImage)(NSInteger row, NSInteger column, NSRect cellRect);
+
 // Double-click / Enter on a cell holding a JSON object or array calls this instead of inline editing.
 @property (nonatomic, copy, nullable) void (^onOpenJSON)(NSInteger row, NSInteger column);
 // Called when the user clicks a cell.

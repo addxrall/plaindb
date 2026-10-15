@@ -4,6 +4,7 @@ PQ      = /opt/homebrew/opt/libpq
 SRC     = $(wildcard src/*.m)
 HDR     = $(wildcard src/*.h)
 RES     = $(wildcard Resources/*.lproj/* Resources/*.icns)
+GRID_SRC = src/GridView.m src/DatePicker.m src/ImageValue.m src/JSONInspector.m src/SQLText.m src/UI.m src/DBConnection.m # what GridView needs
 CFLAGS  = -fobjc-arc -Wall -Wextra -Wno-unused-parameter -g -O1 -I$(PQ)/include
 LDFLAGS = -framework Cocoa -framework QuartzCore -framework Security -L$(PQ)/lib -lpq
 
@@ -29,17 +30,23 @@ install: $(BIN)
 test: tests/*.m tests/*.py $(SRC) $(HDR) $(RES)
 	mkdir -p build
 	clang $(CFLAGS) -Isrc tests/pg_test.m src/PGConnection.m src/DBConnection.m -framework Foundation -L$(PQ)/lib -lpq -o build/pg_test
-	clang $(CFLAGS) -Isrc tests/grid_test.m src/GridView.m src/JSONInspector.m src/SQLText.m src/UI.m src/DBConnection.m -framework Cocoa -o build/grid_test
+	clang $(CFLAGS) -Isrc tests/grid_test.m $(GRID_SRC) -framework Cocoa -o build/grid_test
 	clang $(CFLAGS) -Isrc tests/json_test.m src/JSONInspector.m src/SQLText.m src/UI.m src/DBConnection.m -framework Cocoa -o build/json_test
+	clang $(CFLAGS) -Isrc tests/store_test.m src/ConnectionStore.m -framework Foundation -framework Security -o build/store_test
+	clang $(CFLAGS) -Isrc tests/image_test.m src/ImageValue.m src/UI.m src/DBConnection.m -framework Cocoa -o build/image_test
+	clang $(CFLAGS) -Isrc tests/date_test.m src/DatePicker.m src/UI.m src/DBConnection.m -framework Cocoa -o build/date_test
 	./build/pg_test
 	./build/grid_test
+	./build/store_test
+	./build/image_test
+	./build/date_test
 	./build/json_test
 	python3 -I tests/check_strings.py
 
 # Scroll performance of the grid (opens a window for a few seconds; timings depend on the machine)
 perf: tests/perf_grid.m $(SRC) $(HDR)
 	mkdir -p build
-	clang $(CFLAGS) -Isrc tests/perf_grid.m src/GridView.m src/JSONInspector.m src/SQLText.m src/UI.m src/DBConnection.m -framework Cocoa -framework QuartzCore -o build/perf_grid
+	clang $(CFLAGS) -Isrc tests/perf_grid.m $(GRID_SRC) -framework Cocoa -framework QuartzCore -o build/perf_grid
 	./build/perf_grid
 
 clean:

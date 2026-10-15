@@ -25,13 +25,21 @@
     [NSApp activateIgnoringOtherApps:YES];
 }
 
-- (void)openWindowWithConnection:(id<DBConnection>)connection tunnel:(SSHTunnel *)tunnel info:(NSDictionary *)info {
+- (MainWindowController *)openWindowWithConnection:(id<DBConnection>)connection tunnel:(SSHTunnel *)tunnel info:(NSDictionary *)info {
     MainWindowController *controller = [[MainWindowController alloc] initWithConnection:connection tunnel:tunnel info:info];
     NSMutableArray *windows = _windows;
+    __weak AppDelegate *weakSelf = self;
     controller.onClose = ^(MainWindowController *c) { [windows removeObject:c]; };
+    // Switching from the toolbar: the new window takes the old one's place and size.
+    controller.onReplace = ^(MainWindowController *old, id<DBConnection> connection, SSHTunnel *tunnel, NSDictionary *info) {
+        MainWindowController *replacement = [weakSelf openWindowWithConnection:connection tunnel:tunnel info:info];
+        [replacement.window setFrame:old.window.frame display:YES];
+        [old.window close];
+    };
     [_windows addObject:controller];
     [controller showWindow:nil];
     [_connect.window orderOut:nil];
+    return controller;
 }
 
 - (void)showConnections:(id)sender {

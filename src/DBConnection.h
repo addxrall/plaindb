@@ -15,12 +15,16 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)open:(NSError **)error;
 - (void)close;
 - (nullable DBResult *)execute:(NSString *)sql params:(nullable NSArray *)params error:(NSError **)error;
-// rows: [schema, name, kind]
+// rows: [schema, name, kind, estimated row count (NSNull when unknown)]
 - (nullable DBResult *)tables:(NSError **)error;
+// rows: [column, referenced schema, referenced table, referenced column]; single-column foreign keys only
+- (nullable DBResult *)foreignKeysInSchema:(NSString *)schema table:(NSString *)table error:(NSError **)error;
 // rows: [column, type, null, default, pk]
 - (nullable DBResult *)columnsInSchema:(NSString *)schema table:(NSString *)table error:(NSError **)error;
 // rows: [index name, index definition]
 - (nullable DBResult *)indexesInSchema:(NSString *)schema table:(NSString *)table error:(NSError **)error;
+// rows: [database name], the other databases this connection's server offers
+- (nullable DBResult *)databases:(NSError **)error;
 // WHERE fragment matching parameter $1 (a pattern from DBLikePattern) against every column as text, ignoring case.
 - (NSString *)searchConditionForColumns:(NSArray<NSString *> *)columns;
 @end

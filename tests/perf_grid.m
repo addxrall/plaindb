@@ -76,6 +76,7 @@ int main(void) {
                                                        styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
         GridView *grid = [[GridView alloc] initWithFrame:NSMakeRect(0, 0, 1100, 700)];
         grid.onSort = ^(NSString *c, BOOL a) {};
+        grid.onOpenImage = ^(NSInteger r, NSInteger c, NSRect rect) {}; // as in the app: every cell is checked for images
         window.contentView = grid;
         [window orderFrontRegardless];
         DBResult *page = BigPage(200, 30);

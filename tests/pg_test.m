@@ -25,8 +25,26 @@ int main(void) {
         NSString *schema = [pg execute:@"SELECT nspname FROM pg_namespace WHERE oid = pg_my_temp_schema()"
                                 params:nil error:&err].rows[0][0];
 
+        DBResult *databases = [pg databases:&err];
+        assert([databases.rows containsObject:(@[Params()[@"dbname"]])] && ![databases.rows containsObject:(@[@"template0"])]);
+
         DBResult *tables = [pg tables:&err];
-        assert([tables.rows containsObject:(@[schema, table, @"table"])]);
+        NSUInteger mine = [tables.rows indexOfObjectPassingTest:^BOOL(NSArray *r, NSUInteger i, BOOL *s) { return [r[1] isEqual:table]; }];
+        assert(mine != NSNotFound && [tables.rows[mine][0] isEqual:schema] && [tables.rows[mine][2] isEqual:@"table"]);
+        assert(tables.rows[mine].count == 4); // + estimated rows (NULL until analyzed)
+        assert(([pg execute:[NSString stringWithFormat:@"ANALYZE %@", DBQuoteIdent(table)] params:nil error:&err]));
+        DBResult *analyzed = [pg tables:&err];
+        mine = [analyzed.rows indexOfObjectPassingTest:^BOOL(NSArray *r, NSUInteger i, BOOL *s) { return [r[1] isEqual:table]; }];
+        assert([analyzed.rows[mine][3] isEqual:@"2"]);
+
+        // foreign keys: single-column only, with the referenced table and column
+        assert([pg execute:@"CREATE TEMP TABLE drivers (id serial PRIMARY KEY, name text);"
+                            "CREATE TEMP TABLE pairs (x int, y int, UNIQUE (x, y));"
+                            "CREATE TEMP TABLE cars (id serial PRIMARY KEY, plate text, driver_id int REFERENCES drivers(id),"
+                            " a int, b int, FOREIGN KEY (a, b) REFERENCES pairs (x, y))" // composite: left out
+                    params:nil error:&err]);
+        DBResult *fks = [pg foreignKeysInSchema:schema table:@"cars" error:&err];
+        assert([fks.rows isEqual:(@[@[@"driver_id", schema, @"drivers", @"id"]])]);
 
         DBResult *cols = [pg columnsInSchema:schema table:table error:&err];
         assert(cols.rows.count == 3);

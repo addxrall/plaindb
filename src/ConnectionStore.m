@@ -44,6 +44,22 @@ static NSString *ReadPassword(NSString *service, NSString *connectionId) {
     return ReadPassword(Name, connectionId) ?: ReadPassword(OldName, connectionId);
 }
 
++ (NSString *)frameColorFor:(NSDictionary *)connection {
+    BOOL production = [connection[@"production"] boolValue];
+    NSString *frame = connection[@"frame"] ?: (production ? connection[@"color"] : @"");
+    return frame.length || !production ? (frame ?: @"") : @"#e0342b";
+}
+
++ (NSString *)localFrameColorFor:(NSString *)database {
+    return [NSUserDefaults.standardUserDefaults dictionaryForKey:@"localFrameColors"][database] ?: @"";
+}
+
++ (void)setLocalFrameColor:(NSString *)hex for:(NSString *)database {
+    NSMutableDictionary *all = [[NSUserDefaults.standardUserDefaults dictionaryForKey:@"localFrameColors"] mutableCopy] ?: [NSMutableDictionary new];
+    all[database] = hex.length ? hex : nil;
+    [NSUserDefaults.standardUserDefaults setObject:all forKey:@"localFrameColors"];
+}
+
 + (void)setPassword:(NSString *)password for:(NSString *)connectionId {
     SecItemDelete((__bridge CFDictionaryRef)KeychainQuery(OldName, connectionId));
     NSDictionary *q = KeychainQuery(Name, connectionId);

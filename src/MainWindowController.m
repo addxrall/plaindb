@@ -1,6 +1,11 @@
 #import "MainWindowController.h"
+#import "ConnectionStore.h"
+#import "Connector.h"
+#import "DatePicker.h"
 #import "GridView.h"
+#import "ImageValue.h"
 #import "JSONInspector.h"
+#import "ReferencePopover.h"
 #import "SQLText.h"
 #import "SSHTunnel.h"
 #import "UI.h"
@@ -8,11 +13,30 @@
 static const NSInteger PageSize = 200;
 static NSToolbarItemIdentifier const TabsItem = @"tabs";
 static NSToolbarItemIdentifier const ProductionItem = @"production";
+static NSToolbarItemIdentifier const SwitchItem = @"switch";
 
 typedef DBResult *_Nullable (^Work)(NSError **error);
 typedef NS_ENUM(NSInteger, Tab) { TabData, TabStructure, TabSQL, TabEmpty };
 typedef NS_ENUM(NSInteger, DataState) { DataGrid, DataLoading, DataFailed };
 typedef NS_ENUM(NSInteger, SQLState) { SQLIdle, SQLRunning, SQLDone, SQLFailed, SQLResult };
+
+// 950, 12.3K, 4.5M (localized: 12,3 tys., 4,5 mln)
+static NSString *CompactCount(long long n) {
+    static NSNumberFormatter *f;
+    if (!f) {
+        f = [NSNumberFormatter new];
+        f.numberStyle = NSNumberFormatterDecimalStyle;
+        f.maximumFractionDigits = 1;
+    }
+    if (n < 1000) return [f stringFromNumber:@(n)];
+    if (n < 1000000) return [NSString stringWithFormat:L(@"%@K"), [f stringFromNumber:@(n / 1e3)]];
+    if (n < 1000000000) return [NSString stringWithFormat:L(@"%@M"), [f stringFromNumber:@(n / 1e6)]];
+    return [NSString stringWithFormat:L(@"%@B"), [f stringFromNumber:@(n / 1e9)]];
+}
+
+static NSString *FullCount(long long n) {
+    return [NSNumberFormatter localizedStringFromNumber:@(n) numberStyle:NSNumberFormatterDecimalStyle];
+}
 
 static NSView *Dot(NSColor *color, CGFloat size) {
     NSBox *dot = TBPanel(color);
@@ -49,6 +73,15 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     NSArray<NSArray *> *_tables;
     NSArray *_sideRows; // NSString = section header, NSArray = [schema, name, kind]
     NSMutableArray<NSString *> *_pinned; // "schema.table", in the order they were pinned
+    NSArray<NSString *> *_databases;     // other databases on this server, for the switcher
+    NSMenu *_switchMenu;
+    NSDictionary<NSString *, NSArray *> *_foreignKeys; // column → [referenced schema, table, column]
+    NSDictionary<NSString *, NSString *> *_columnKinds; // column → TBValueKind (bool, date, time…)
+    id _estimate;                        // planner's row estimate for the open table (NSString or NSNull)
+    NSPopover *_popover;
+    NSTextField *_truncateField;         // while the "Empty table" sheet is open
+    NSButton *_truncateButton;
+    NSString *_truncateName;
     NSString *_schema, *_table, *_sortColumn;
     BOOL _sortAscending, _isView;
     NSInteger _offset;
@@ -112,6 +145,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     NSString *target = [NSString stringWithFormat:@"%@@%@/%@", info[@"user"] ?: @"", [info[@"host"] length] ? info[@"host"] : @"localhost",
                                                   info[@"database"] ?: @""];
     window.subtitle = [info[@"sshHost"] length] ? [NSString stringWithFormat:L(@"%@ via %@"), target, info[@"sshHost"]] : target;
+    window.titleVisibility = NSWindowTitleHidden; // shown by the switcher instead; still used by the Window menu
     window.toolbarStyle = NSWindowToolbarStyleUnified;
 
     [self buildUI];
@@ -120,7 +154,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     toolbar.displayMode = NSToolbarDisplayModeIconOnly;
     toolbar.centeredItemIdentifiers = [NSSet setWithObject:TabsItem];
     window.toolbar = toolbar;
-    if (_production) [self applyProductionFrame]; // after the toolbar: it decides the corner radius
+    // Production always has a frame; other connections when the user picked a colour. After the toolbar: it decides the corner radius.
+    if ([ConnectionStore frameColorFor:info].length) [self applyProductionFrame];
     window.contentMinSize = NSMakeSize(760, 460);
     [window setContentSize:NSMakeSize(1100, 700)];
     [window center];
@@ -166,6 +201,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 
     for (GridView *grid in @[_dataGrid, _sqlGrid]) {
         __weak GridView *weakGrid = grid;
+        grid.onOpenImage = ^(NSInteger row, NSInteger column, NSRect rect) { [weakSelf openImageInGrid:weakGrid row:row column:column rect:rect]; };
         grid.onOpenJSON = ^(NSInteger row, NSInteger column) { [weakSelf showJSONInGrid:weakGrid row:row column:column open:YES]; };
         grid.onSelectCell = ^(NSInteger row, NSInteger column) { [weakSelf showJSONInGrid:weakGrid row:row column:column open:NO]; };
     }
@@ -290,7 +326,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     return content;
 }
 
-// Design: a 3 pt ring around the whole window (sidebar and toolbar included), above everything,
+// Design: a 3 pt ring in the connection's colour around the whole window (sidebar and toolbar included), above everything,
 // following the window's rounded corners. The window's root view layer draws it, because a layer
 // border is composited above all sublayers. AppKit doesn't publish the corner radius (16 pt with a
 // unified toolbar), so it comes from the private _cornerRadius, with a fallback.
@@ -306,7 +342,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 }
 
 - (NSColor *)productionColor {
-    return [Theme colorFromHex:_info[@"color"] fallback:Theme.productionBanner];
+    return [Theme colorFromHex:[ConnectionStore frameColorFor:_info] fallback:Theme.productionBanner];
 }
 
 // Right side of the title bar on production: "PRODUCTION" badge in the frame colour plus a short note.
@@ -363,6 +399,11 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     __weak MainWindowController *weakSelf = self;
     _dataGrid.onSort = ^(NSString *column, BOOL ascending) { [weakSelf sortBy:column ascending:ascending]; };
     _dataGrid.onChange = ^{ [weakSelf updateChanges]; };
+    _dataGrid.onOpenReference = ^(NSInteger row, NSInteger column, NSRect rect) { [weakSelf openReferenceAtRow:row column:column rect:rect]; };
+    _dataGrid.onPickReference = ^(NSInteger row, NSInteger column, NSRect rect) { [weakSelf pickReferenceAtRow:row column:column rect:rect]; };
+    _dataGrid.onPickDate = ^(NSInteger row, NSInteger column, NSRect rect, NSString *kind) {
+        [weakSelf pickDateAtRow:row column:column rect:rect kind:kind];
+    };
 
     _dataSpinner = TBSpinner(NSControlSizeRegular);
     _loadingLabel = TBLabel(@"", 12, NSFontWeightRegular, NSColor.secondaryLabelColor);
@@ -514,7 +555,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 #pragma mark - Toolbar
 
 - (NSArray<NSToolbarItemIdentifier> *)toolbarDefaultItemIdentifiers:(NSToolbar *)toolbar {
-    NSArray *items = @[NSToolbarSidebarTrackingSeparatorItemIdentifier, NSToolbarFlexibleSpaceItemIdentifier, TabsItem, NSToolbarFlexibleSpaceItemIdentifier];
+    NSArray *items = @[NSToolbarSidebarTrackingSeparatorItemIdentifier, SwitchItem, NSToolbarFlexibleSpaceItemIdentifier, TabsItem,
+                       NSToolbarFlexibleSpaceItemIdentifier];
     return _production ? [items arrayByAddingObject:ProductionItem] : items;
 }
 
@@ -527,6 +569,9 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     if ([identifier isEqual:TabsItem]) {
         item.view = _tabSwitch;
         item.label = L(@"View");
+    } else if ([identifier isEqual:SwitchItem]) {
+        item.view = [self switcherView];
+        item.label = L(@"Database");
     } else if ([identifier isEqual:ProductionItem]) {
         item.view = [self productionBadge];
         item.label = L(@"PRODUCTION");
@@ -613,6 +658,11 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
         [self filterChanged:nil];
         [self updateStatus];
     } failed:nil];
+    [self run:^DBResult *(NSError **e) { return [conn databases:e]; } done:^(DBResult *r, double ms) {
+        NSMutableArray *names = [NSMutableArray new];
+        for (NSArray *row in r.rows) [names addObject:row[0]];
+        self->_databases = names;
+    } failed:^(NSError *error, double ms) {}]; // no list (e.g. no access to pg_database): the switcher shows saved connections only
 }
 
 - (void)filterChanged:(id)sender {
@@ -637,6 +687,193 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     [self reselectCurrentTable];
 }
 
+#pragma mark - Foreign keys
+
+- (void)showPopover:(NSViewController *)content rect:(NSRect)rect {
+    [self showPopover:content rect:rect inView:_dataGrid.table];
+}
+
+- (void)showPopover:(NSViewController *)content rect:(NSRect)rect inView:(NSView *)view {
+    [_popover close];
+    _popover = [NSPopover new];
+    _popover.behavior = NSPopoverBehaviorTransient;
+    _popover.contentViewController = content;
+    [_popover showRelativeToRect:rect ofView:view preferredEdge:NSRectEdgeMaxY];
+}
+
+// Editing a date/time cell: calendar and clock instead of typing the format.
+- (void)pickDateAtRow:(NSInteger)row column:(NSInteger)column rect:(NSRect)rect kind:(NSString *)kind {
+    id original = [_dataGrid valueAtRow:row column:column] ?: NSNull.null;
+    DatePickerPopover *picker = [[DatePickerPopover alloc] initWithTitle:_dataGrid.result.columns[column] value:original kind:kind];
+    __weak MainWindowController *weakSelf = self;
+    picker.onPick = ^(id value) {
+        MainWindowController *strongSelf = weakSelf;
+        // same moment written differently (+02 vs +02:00) is not a change
+        BOOL same = [value isKindOfClass:NSString.class] && [original isKindOfClass:NSString.class] &&
+                    [TBDateFromValue(value, kind) isEqual:TBDateFromValue(original, kind)];
+        if (!same) [strongSelf->_dataGrid updateValue:value row:row column:column];
+        [strongSelf->_popover close];
+    };
+    [self showPopover:picker rect:rect];
+}
+
+// 🖼 on an image value (bytea, data URI, base64, URL): the picture in a popover.
+- (void)openImageInGrid:(GridView *)grid row:(NSInteger)row column:(NSInteger)column rect:(NSRect)rect {
+    id value = [grid valueAtRow:row column:column];
+    if (![value isKindOfClass:NSString.class]) return;
+    ImagePreview *preview = [[ImagePreview alloc] initWithTitle:grid.result.columns[column] value:value];
+    [self showPopover:preview rect:rect inView:grid.table];
+}
+
+// ↗ on a foreign key value: the referenced row, field by field.
+- (void)openReferenceAtRow:(NSInteger)row column:(NSInteger)column rect:(NSRect)rect {
+    NSString *name = _dataGrid.result.columns[column];
+    NSArray *fk = _foreignKeys[name];
+    id value = [_dataGrid valueAtRow:row column:column];
+    if (!fk || ![value isKindOfClass:NSString.class]) return;
+    NSString *sql = [NSString stringWithFormat:@"SELECT * FROM %@.%@ WHERE %@ = $1 LIMIT 1", DBQuoteIdent(fk[0]), DBQuoteIdent(fk[1]), DBQuoteIdent(fk[2])];
+    id<DBConnection> conn = _conn;
+    [self run:^DBResult *(NSError **e) { return [conn execute:sql params:@[value] error:e]; } done:^(DBResult *r, double ms) {
+        NSString *table = [fk[0] isEqual:@"public"] ? fk[1] : [NSString stringWithFormat:@"%@.%@", fk[0], fk[1]];
+        ReferencePreview *preview = [[ReferencePreview alloc] initWithTitle:table subtitle:[NSString stringWithFormat:@"%@ = %@", fk[2], value] result:r];
+        __weak MainWindowController *weakSelf = self;
+        preview.onOpenTable = ^{ [weakSelf openTableSchema:fk[0] name:fk[1]]; };
+        [self showPopover:preview rect:rect];
+    } failed:nil];
+}
+
+// Editing a foreign key: search the referenced table and pick a row; its key goes into the cell.
+- (void)pickReferenceAtRow:(NSInteger)row column:(NSInteger)column rect:(NSRect)rect {
+    NSArray *fk = _foreignKeys[_dataGrid.result.columns[column]];
+    if (!fk) return;
+    NSString *table = [NSString stringWithFormat:@"%@.%@", DBQuoteIdent(fk[0]), DBQuoteIdent(fk[1])];
+    NSString *title = [NSString stringWithFormat:L(@"Choose a row from %@"), [fk[0] isEqual:@"public"] ? fk[1] : [NSString stringWithFormat:@"%@.%@", fk[0], fk[1]]];
+    ReferencePicker *picker = [[ReferencePicker alloc] initWithTitle:title keyColumn:fk[2]];
+    __weak ReferencePicker *weakPicker = picker;
+    __weak MainWindowController *weakSelf = self;
+    __block NSArray<NSString *> *columns = nil; // learned from the first (unfiltered) query
+    id<DBConnection> conn = _conn;
+    picker.onSearch = ^(NSString *term) {
+        NSString *where = term.length && columns ? [@" WHERE " stringByAppendingString:[conn searchConditionForColumns:columns]] : @"";
+        NSString *sql = [NSString stringWithFormat:@"SELECT * FROM %@%@ ORDER BY %@ LIMIT 20", table, where, DBQuoteIdent(fk[2])];
+        NSArray *params = where.length ? @[DBLikePattern(term)] : nil;
+        [weakSelf run:^DBResult *(NSError **e) {
+            [conn execute:@"SET statement_timeout = 3000" params:nil error:NULL]; // the referenced table may be big
+            DBResult *r = [conn execute:sql params:params error:e];
+            [conn execute:@"RESET statement_timeout" params:nil error:NULL];
+            return r;
+        } done:^(DBResult *r, double ms) {
+            if (!columns) columns = r.columns;
+            [weakPicker showResult:r error:nil];
+        } failed:^(NSError *error, double ms) {
+            [weakPicker showResult:nil error:error];
+        }];
+    };
+    picker.onPick = ^(id value) {
+        MainWindowController *strongSelf = weakSelf;
+        [strongSelf->_dataGrid updateValue:value row:row column:column];
+        [strongSelf->_popover close];
+    };
+    [self showPopover:picker rect:rect];
+}
+
+- (void)openTableSchema:(NSString *)schema name:(NSString *)name {
+    [_popover close];
+    NSUInteger row = [_sideRows indexOfObjectPassingTest:^BOOL(id item, NSUInteger i, BOOL *stop) {
+        return [item isKindOfClass:NSArray.class] && [item[0] isEqual:schema] && [item[1] isEqual:name];
+    }];
+    if (row == NSNotFound || ![self confirmDiscard]) return;
+    [_sidebar selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+    [_sidebar scrollRowToVisible:row];
+}
+
+#pragma mark - Switching database or connection
+
+// Connection name and target at the left of the toolbar (as in the design), with ▾: a click opens the switcher.
+- (NSView *)switcherView {
+    NSTextField *name = TBLabel(_info[@"name"], 13, NSFontWeightSemibold, NSColor.labelColor);
+    NSTextField *target = TBLabel(self.window.subtitle, 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
+    NSImageView *chevron = [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"chevron.down" accessibilityDescription:nil]];
+    chevron.symbolConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:9 weight:NSFontWeightSemibold];
+    chevron.contentTintColor = NSColor.secondaryLabelColor;
+    for (NSTextField *label in @[name, target]) // full text up to the 320 pt cap below
+        [label setContentCompressionResistancePriority:NSLayoutPriorityDefaultHigh - 1 forOrientation:NSLayoutConstraintOrientationHorizontal];
+    NSStackView *texts = TBColumn(@[name, target], nil);
+    texts.spacing = 1;
+    NSStackView *view = [NSStackView stackViewWithViews:@[texts, chevron]];
+    view.spacing = 6;
+    view.edgeInsets = NSEdgeInsetsMake(2, 6, 2, 6);
+    view.toolTip = L(@"Switch database or connection");
+    view.accessibilityRole = NSAccessibilityPopUpButtonRole;
+    view.accessibilityLabel = L(@"Switch database or connection");
+    [view.widthAnchor constraintLessThanOrEqualToConstant:320].active = YES;
+    [view addGestureRecognizer:[[NSClickGestureRecognizer alloc] initWithTarget:self action:@selector(openSwitcher:)]];
+    _switchMenu = [NSMenu new];
+    _switchMenu.delegate = self;
+    return view;
+}
+
+- (void)openSwitcher:(NSClickGestureRecognizer *)click {
+    NSView *view = click.view;
+    [_switchMenu popUpMenuPositioningItem:nil atLocation:NSMakePoint(0, view.isFlipped ? NSMaxY(view.bounds) + 4 : -4) inView:view];
+}
+
+- (void)buildSwitchMenu {
+    NSMenu *menu = _switchMenu;
+    [menu addItem:[NSMenuItem sectionHeaderWithTitle:L(@"Databases on this server")]];
+    for (NSString *db in _databases) {
+        NSMenuItem *item = [menu addItemWithTitle:db action:@selector(switchDatabase:) keyEquivalent:@""];
+        item.target = self;
+        item.representedObject = db;
+        item.image = [NSImage imageWithSystemSymbolName:@"cylinder" accessibilityDescription:nil];
+        item.state = [db isEqual:_info[@"database"]] ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+    NSArray *saved = [ConnectionStore load];
+    if (saved.count) {
+        [menu addItem:NSMenuItem.separatorItem];
+        [menu addItem:[NSMenuItem sectionHeaderWithTitle:L(@"Saved connections")]];
+    }
+    for (NSDictionary *c in saved) {
+        NSMenuItem *item = [menu addItemWithTitle:c[@"name"] action:@selector(switchConnection:) keyEquivalent:@""];
+        item.target = self;
+        item.representedObject = c;
+        item.image = [NSImage imageWithSystemSymbolName:[c[@"sshHost"] length] ? @"lock.shield" : @"cylinder" accessibilityDescription:nil];
+        item.subtitle = [c[@"sshHost"] length] ? [NSString stringWithFormat:L(@"via %@"), c[@"sshHost"]] : c[@"database"];
+        item.state = [c[@"id"] isEqual:_info[@"id"]] && [c[@"database"] isEqual:_info[@"database"]] ? NSControlStateValueOn : NSControlStateValueOff;
+    }
+    [menu addItem:NSMenuItem.separatorItem];
+    [menu addItemWithTitle:L(@"Connections…") action:NSSelectorFromString(@"showConnections:") keyEquivalent:@""];
+}
+
+// Same server, same credentials and tunnel settings, another database.
+- (void)switchDatabase:(NSMenuItem *)sender {
+    NSMutableDictionary *info = [_info mutableCopy];
+    info[@"database"] = sender.representedObject;
+    if ([info[@"id"] isEqual:@"local"]) { // local windows are named after the database and use its colour
+        info[@"name"] = sender.representedObject;
+        info[@"frame"] = [ConnectionStore localFrameColorFor:sender.representedObject];
+    }
+    [self switchTo:info];
+}
+
+- (void)switchConnection:(NSMenuItem *)sender {
+    [self switchTo:sender.representedObject];
+}
+
+- (void)switchTo:(NSDictionary *)info {
+    if ([info isEqual:_info] || ![self confirmDiscard]) return;
+    NSString *password = [info[@"id"] isEqual:@"local"] ? @"" : [ConnectionStore passwordFor:info[@"id"]] ?: @"";
+    _statusLabel.stringValue = [info[@"sshHost"] length] ? [NSString stringWithFormat:L(@"Opening tunnel via %@…"), info[@"sshHost"]]
+                                                         : [NSString stringWithFormat:L(@"Connecting to %@…"), info[@"database"] ?: info[@"name"]];
+    TBConnect(info, password, ^(id<DBConnection> connection, SSHTunnel *tunnel, NSError *error) {
+        if (!connection) {
+            [self updateStatus];
+            return [self showError:error];
+        }
+        if (self.onReplace) self.onReplace(self, connection, tunnel, info);
+    });
+}
+
 #pragma mark - Pinned tables
 
 // Pins are kept per connection and database.
@@ -650,12 +887,87 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     [menu removeAllItems];
+    if (menu == _switchMenu) return [self buildSwitchMenu];
     NSInteger row = _sidebar.clickedRow;
     if (row < 0 || ![_sideRows[row] isKindOfClass:NSArray.class]) return;
     BOOL pinned = [_pinned containsObject:[self pinName:_sideRows[row]]];
     NSMenuItem *item = [menu addItemWithTitle:pinned ? L(@"Unpin") : L(@"Pin") action:@selector(togglePin:) keyEquivalent:@""];
     item.target = self;
     item.representedObject = _sideRows[row];
+    if ([_sideRows[row][2] isEqual:@"table"]) {
+        [menu addItem:NSMenuItem.separatorItem];
+        NSMenuItem *empty = [menu addItemWithTitle:L(@"Empty Table…") action:@selector(confirmTruncate:) keyEquivalent:@""];
+        empty.target = self;
+        empty.representedObject = _sideRows[row];
+    }
+}
+
+#pragma mark - Emptying a table
+
+// The table name must be typed to enable "Empty Table" (it can be copied from the sheet).
+- (void)confirmTruncate:(NSMenuItem *)sender {
+    NSArray *t = sender.representedObject;
+    _truncateName = [t[0] isEqual:@"public"] ? t[1] : [NSString stringWithFormat:@"%@.%@", t[0], t[1]];
+    NSAlert *alert = [NSAlert new];
+    alert.alertStyle = NSAlertStyleCritical;
+    alert.messageText = [NSString stringWithFormat:L(@"Empty the table %@?"), _truncateName];
+    alert.informativeText = L(@"This deletes all its rows (TRUNCATE) and can't be undone. Type the table name to confirm.");
+
+    NSTextField *name = TBLabel(_truncateName, 12, NSFontWeightSemibold, NSColor.labelColor);
+    name.font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightSemibold];
+    name.selectable = YES;
+    NSButton *copy = TBButton(L(@"Copy"), self, @selector(copyTruncateName:));
+    copy.controlSize = NSControlSizeSmall;
+    NSStackView *nameRow = [NSStackView stackViewWithViews:@[name, copy]];
+    nameRow.spacing = 8;
+    _truncateField = [NSTextField new];
+    _truncateField.placeholderString = _truncateName;
+    _truncateField.font = [Theme mono:12];
+    _truncateField.delegate = (id<NSTextFieldDelegate>)self;
+    NSStackView *accessory = TBColumn(@[nameRow, _truncateField], nil);
+    accessory.alignment = NSLayoutAttributeLeading;
+    accessory.spacing = 8;
+    accessory.frame = NSMakeRect(0, 0, 300, 58);
+    alert.accessoryView = accessory;
+
+    _truncateButton = [alert addButtonWithTitle:L(@"Empty Table")];
+    NSButton *cancel = [alert addButtonWithTitle:L(@"Cancel")];
+    _truncateButton.hasDestructiveAction = YES;
+    _truncateButton.keyEquivalent = @""; // Enter cancels
+    _truncateButton.enabled = NO;
+    cancel.keyEquivalent = @"\r";
+    alert.window.initialFirstResponder = _truncateField;
+    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        self->_truncateField = nil;
+        if (response == NSAlertFirstButtonReturn) [self truncateSchema:t[0] table:t[1]];
+    }];
+}
+
+- (void)copyTruncateName:(id)sender {
+    [NSPasteboard.generalPasteboard clearContents];
+    [NSPasteboard.generalPasteboard setString:_truncateName forType:NSPasteboardTypeString];
+}
+
+- (void)controlTextDidChange:(NSNotification *)notification {
+    if (notification.object == _truncateField) _truncateButton.enabled = [_truncateField.stringValue isEqual:_truncateName];
+}
+
+- (void)truncateSchema:(NSString *)schema table:(NSString *)table {
+    NSString *sql = [NSString stringWithFormat:@"TRUNCATE TABLE %@.%@", DBQuoteIdent(schema), DBQuoteIdent(table)];
+    id<DBConnection> conn = _conn;
+    [self run:^DBResult *(NSError **e) { // explicit READ WRITE: a production session is read-only by default
+        if (![conn execute:@"BEGIN READ WRITE" params:nil error:e]) return nil;
+        DBResult *r = [conn execute:sql params:nil error:e];
+        if (r && [conn execute:@"COMMIT" params:nil error:e]) return r;
+        [conn execute:@"ROLLBACK" params:nil error:NULL];
+        return nil;
+    } done:^(DBResult *r, double ms) {
+        if ([self->_schema isEqual:schema] && [self->_table isEqual:table]) {
+            [self->_dataGrid discardChanges];
+            [self loadDataShowingSpinner:NO];
+        }
+        [self loadTables]; // row estimates
+    } failed:nil];
 }
 
 - (void)togglePin:(NSMenuItem *)sender {
@@ -718,6 +1030,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
                                                     : L(@"no rows");
         self->_prevButton.enabled = offset > 0;
         self->_nextButton.enabled = r.rows.count == PageSize;
+        if (r.rows.count) [self loadTotalWhere:term ? [conn searchConditionForColumns:self->_columnNames] : nil params:params
+                                        offset:offset shown:r.rows.count];
         self->_dataStatus = [NSString stringWithFormat:@"%@ · %.0f ms", LN(@"%lu rows", r.rows.count), ms];
         [self updateStatus];
     } failed:^(NSError *error, double ms) {
@@ -732,6 +1046,34 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     }];
 }
 
+// "1–200 of 12,345": an exact count, capped at 3 s; on a huge table the planner's estimate is shown instead.
+- (void)loadTotalWhere:(NSString *)where params:(NSArray *)params offset:(NSInteger)offset shown:(NSUInteger)shown {
+    NSString *sql = [NSString stringWithFormat:@"SELECT count(*) FROM %@.%@%@", DBQuoteIdent(_schema), DBQuoteIdent(_table),
+                                               where ? [@" WHERE " stringByAppendingString:where] : @""];
+    NSString *table = _table, *term = _searchTerm;
+    id estimate = _estimate;
+    BOOL (^stale)(void) = ^BOOL { // the user moved on meanwhile
+        return ![self->_table isEqual:table] || self->_offset != offset || !(self->_searchTerm == term || [self->_searchTerm isEqual:term]);
+    };
+    NSString *range = [NSString stringWithFormat:@"%ld–%ld", (long)offset + 1, (long)(offset + shown)];
+    id<DBConnection> conn = _conn;
+    [self run:^DBResult *(NSError **e) {
+        [conn execute:@"SET statement_timeout = 3000" params:nil error:NULL];
+        DBResult *r = [conn execute:sql params:params error:e];
+        [conn execute:@"RESET statement_timeout" params:nil error:NULL];
+        return r;
+    } done:^(DBResult *r, double ms) {
+        if (stale()) return;
+        long long total = [r.rows.firstObject.firstObject longLongValue];
+        self->_pageLabel.stringValue = [NSString stringWithFormat:L(@"%@ of %@"), range, FullCount(total)];
+        self->_nextButton.enabled = offset + (long long)shown < total;
+        if (term) self->_searchStatus.stringValue = LN(@"%lu matching rows", (NSUInteger)total);
+    } failed:^(NSError *error, double ms) {
+        if (stale() || term || ![estimate isKindOfClass:NSString.class]) return;
+        self->_pageLabel.stringValue = [NSString stringWithFormat:L(@"%@ of ~%@"), range, CompactCount([estimate longLongValue])];
+    }];
+}
+
 - (void)loadStructure {
     id<DBConnection> conn = _conn;
     NSString *schema = _schema, *table = _table;
@@ -740,8 +1082,10 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     [self run:^DBResult *(NSError **e) { return [conn columnsInSchema:schema table:table error:e]; } done:^(DBResult *r, double ms) {
         NSMutableArray *pk = [NSMutableArray new], *rows = [NSMutableArray new], *names = [NSMutableArray new];
         NSMutableSet *defaults = [NSMutableSet new];
+        NSMutableDictionary *kinds = [NSMutableDictionary new];
         for (NSArray *col in r.rows) { // [column, type, null, default, pk]
             [names addObject:col[0]];
+            kinds[col[0]] = TBKindForType(col[1]);
             if ([col[4] isEqual:@"PK"]) [pk addObject:col[0]];
             if (col[3] != NSNull.null) [defaults addObject:col[0]];
             [rows addObject:@[col[0], col[1], [col[2] length] ? @"✓" : @"", col[3], col[4]]];
@@ -749,12 +1093,18 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
         self->_pkColumns = pk;
         self->_defaultColumns = defaults;
         self->_columnNames = names;
+        self->_columnKinds = kinds;
         DBResult *shown = [DBResult new];
         shown.columns = @[L(@"Name"), L(@"Type"), @"NOT NULL", L(@"Default"), @"PK"];
         shown.rows = rows;
         self->_columnsGrid.result = shown;
         self->_structureMeta.stringValue = LN(@"%lu columns", rows.count);
     } failed:nil];
+    [self run:^DBResult *(NSError **e) { return [conn foreignKeysInSchema:schema table:table error:e]; } done:^(DBResult *r, double ms) {
+        NSMutableDictionary *keys = [NSMutableDictionary new];
+        for (NSArray *fk in r.rows) keys[fk[0]] = @[fk[1], fk[2], fk[3]];
+        self->_foreignKeys = keys;
+    } failed:^(NSError *error, double ms) {}]; // without foreign keys the grid just has no ↗
     [self run:^DBResult *(NSError **e) { return [conn indexesInSchema:schema table:table error:e]; } done:^(DBResult *r, double ms) {
         DBResult *shown = [DBResult new];
         shown.columns = @[L(@"Name"), L(@"Definition")];
@@ -803,11 +1153,16 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     _readOnlyText.stringValue = _isView ? L(@"View: data is read-only.")
                                         : [NSString stringWithFormat:L(@"Read-only: table %@ has no primary key, so a row can't be identified unambiguously."),
                                                                      [self displayName]];
-    NSMutableIndexSet *defaults = [NSMutableIndexSet new];
+    NSMutableIndexSet *defaults = [NSMutableIndexSet new], *references = [NSMutableIndexSet new];
+    NSMutableDictionary *kinds = [NSMutableDictionary new];
     [_dataGrid.result.columns enumerateObjectsUsingBlock:^(NSString *name, NSUInteger i, BOOL *stop) {
         if ([self->_defaultColumns containsObject:name]) [defaults addIndex:i];
+        if (self->_foreignKeys[name]) [references addIndex:i];
+        kinds[@(i)] = self->_columnKinds[name];
     }];
     _dataGrid.defaultColumns = defaults;
+    _dataGrid.referenceColumns = references;
+    _dataGrid.columnKinds = kinds;
 }
 
 - (void)updateChanges {
@@ -992,7 +1347,10 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     }
     NSArray *t = item;
     BOOL isView = [t[2] isEqual:@"view"];
-    TBCellView *cell = TBCell(tableView, @"table", YES);
+    TBCellView *cell = [self sidebarTableCell:tableView];
+    NSTextField *count = [cell viewWithTag:2];
+    count.stringValue = [t[3] isKindOfClass:NSString.class] ? CompactCount([t[3] longLongValue]) : @"";
+    count.toolTip = [t[3] isKindOfClass:NSString.class] ? [NSString stringWithFormat:L(@"About %@ rows (estimate)"), FullCount([t[3] longLongValue])] : nil;
     NSMutableAttributedString *name = [NSMutableAttributedString new];
     if (![t[0] isEqual:@"public"] && ![t[0] isEqual:@"main"])
         [name appendAttributedString:[[NSAttributedString alloc] initWithString:[t[0] stringByAppendingString:@"."]
@@ -1002,6 +1360,40 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     cell.textField.attributedStringValue = name;
     cell.imageView.image = [NSImage imageWithSystemSymbolName:isView ? @"rectangle.dashed" : @"tablecells" accessibilityDescription:nil];
     cell.imageView.contentTintColor = isView ? NSColor.secondaryLabelColor : NSColor.controlAccentColor;
+    return cell;
+}
+
+// Sidebar row for a table: icon, name, and the estimated row count on the right.
+- (TBCellView *)sidebarTableCell:(NSTableView *)tableView {
+    TBCellView *cell = [tableView makeViewWithIdentifier:@"table" owner:nil];
+    if (cell) return cell;
+    cell = [TBCellView new];
+    cell.identifier = @"table";
+    NSImageView *image = [NSImageView new];
+    NSTextField *name = [NSTextField labelWithString:@""];
+    name.lineBreakMode = NSLineBreakByTruncatingTail;
+    [name setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow forOrientation:NSLayoutConstraintOrientationHorizontal];
+    NSTextField *count = TBLabel(@"", 11, NSFontWeightRegular, NSColor.tertiaryLabelColor);
+    count.font = [NSFont monospacedDigitSystemFontOfSize:11 weight:NSFontWeightRegular];
+    count.tag = 2;
+    [count setContentCompressionResistancePriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+    [count setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
+    for (NSView *v in @[image, name, count]) {
+        v.translatesAutoresizingMaskIntoConstraints = NO;
+        [cell addSubview:v];
+    }
+    [NSLayoutConstraint activateConstraints:@[
+        [image.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:6],
+        [image.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
+        [image.widthAnchor constraintEqualToConstant:16],
+        [name.leadingAnchor constraintEqualToAnchor:image.trailingAnchor constant:7],
+        [name.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
+        [count.leadingAnchor constraintGreaterThanOrEqualToAnchor:name.trailingAnchor constant:6],
+        [count.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-6],
+        [count.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
+    ]];
+    cell.imageView = image;
+    cell.textField = name;
     return cell;
 }
 
@@ -1017,6 +1409,9 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     _schema = t[0];
     _table = t[1];
     _isView = [t[2] isEqual:@"view"];
+    _estimate = t[3];
+    _foreignKeys = nil; // until this table's are loaded
+    _columnKinds = nil;
     _pkColumns = _columnNames = nil; // read-only until the structure is loaded
     _searchTerm = nil;                 // a search belongs to one table
     _searchField.stringValue = @"";

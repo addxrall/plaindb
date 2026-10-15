@@ -1,13 +1,34 @@
-# PlainDB
+<p align="center">
+  <img src="docs/icon.png" width="128" height="128" alt="PlainDB icon">
+</p>
 
-A small, native Postgres client for macOS, written in Objective-C and AppKit. For quickly looking at what a database contains and fixing a value here and there. Everything runs locally: no accounts, no cloud. The interface is available in English and Polish.
+<h1 align="center">PlainDB</h1>
+
+<p align="center">
+  <b>A small, native Postgres client for macOS.</b><br>
+  Look at what a database contains, fix a value, run a query. Locally, over SSH, without the clutter.
+</p>
+
+<p align="center">
+  macOS · Objective-C / AppKit · PostgreSQL · English &amp; Polish
+</p>
+
+<p align="center">
+  <img src="docs/screenshot.png" width="820" alt="PlainDB: SQL tab with a JSON value open in the inspector, on a production connection">
+</p>
+
+PlainDB is written in Objective-C and AppKit, with no Electron and no web views. It's for quickly looking at what a database contains and fixing a value here and there. Everything runs locally: no accounts, no cloud. Production connections are read-only until you confirm a write, and they are framed in a colour you pick, so you always know where you are.
 
 ## Features
 
 - **Local databases** like in Postgres.app: a grid of databases on the local server, one click connects.
-- **Saved connections** with passwords in the Keychain. Production connections get a coloured frame around the window and a "PRODUCTION" badge in the title bar, in one of 8 colours or a custom one.
+- **Saved connections** with passwords in the Keychain. Any connection, local databases included, can have a coloured frame around its window (8 colours or a custom one). Production connections always have one, plus a "PRODUCTION" badge in the title bar.
 - **SSH tunnel** through the system `ssh`, so `~/.ssh/config`, keys, the agent and `ProxyJump` just work. The tunnel stays up and reconnects by itself; the status bar shows its state.
-- Sidebar with tables and views, with a filter. Right-click a table to **pin** it to the top (remembered per connection and database).
+- **Switch database or connection** from the window: click the connection name in the toolbar for the other databases on the same server (also over SSH) and your saved connections.
+- Sidebar with tables and views, with a filter and an estimated row count per table. Right-click a table to **pin** it to the top (remembered per connection and database) or to **empty** it (`TRUNCATE`, after typing its name).
+- **Foreign keys**: a ↗ next to the value opens the referenced row in a popover. Editing the value opens a search in the referenced table: type a name, pick the row, and its key goes into the cell.
+- **Images** stored as `bytea`, base64, `data:` URIs or image URLs get a 🖼; click it to see the picture, its size and dimensions.
+- **Typed editing**: booleans show a checkbox that toggles with a click. `date`, `time`, `timestamp` and `timestamptz` open a calendar and clock; `timestamptz` is shown in your time zone and written with its offset.
 - **Find (⌘F)**: search every column of the whole table (not just the loaded page), ignoring case; matches are highlighted. In the SQL editor ⌘F searches the query text.
 - **Data**: 200 rows per page, row numbers, click a header to sort, numbers right-aligned.
 - **Editing** (tables with a primary key):

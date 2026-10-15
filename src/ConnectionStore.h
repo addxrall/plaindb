@@ -9,6 +9,12 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSMutableArray<NSMutableDictionary *> *)load;
 + (void)save:(NSArray<NSDictionary *> *)connections;
 + (nullable NSString *)passwordFor:(NSString *)connectionId;
+// Window frame colour as "#rrggbb", or "" for none. Production connections always get one (red by default).
+// Stored under "frame"; older entries only had "color", which was meant for production connections only.
++ (NSString *)frameColorFor:(NSDictionary *)connection;
+// Frame colours of databases opened from the Local tab, by database name.
++ (NSString *)localFrameColorFor:(NSString *)database;
++ (void)setLocalFrameColor:(NSString *)hex for:(NSString *)database;
 + (void)setPassword:(nullable NSString *)password for:(NSString *)connectionId;
 @end
 

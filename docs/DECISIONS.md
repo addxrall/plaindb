@@ -79,6 +79,51 @@
 - Each search runs with `statement_timeout = 15 s`, since it scans every column of the whole table. On a big production table it stops with a hint instead of blocking the connection.
 - The condition comes from the connection (`searchConditionForColumns:`), so SQLite can supply its own syntax later.
 
+## 2026-10-15 · Switching database or connection from the window
+
+**Decision:** the connection name and target at the left of the toolbar (as in the design) open a menu: databases on the same server (`pg_database` through the current connection, so it works over SSH too), saved connections, Connections…. A choice opens the new connection with the same code as the Connections window (`TBConnect` in `Connector.m`). That window replaces the current one in place, after the unsaved-changes prompt; the old window closes with its tunnel.
+**Rejected:** swapping the connection inside the same window. Every piece of per-connection state (tables, pins, grids, inspector, tunnel, production frame and badge) would have to be reset by hand.
+
+## 2026-10-15 · Row counts
+
+**Decision:**
+- The sidebar shows the planner's estimate (`pg_class.reltuples`), which is free to read even on huge tables.
+- The open table gets an exact `count(*)` (with the active search's `WHERE`) after its page loads, under a 3 s `statement_timeout`. If that times out, the pager shows "of ~estimate".
+
+## 2026-10-15 · Emptying a table
+
+**Decision:**
+- Right-click → "Empty Table…" runs `TRUNCATE`, but only after the table name is typed. The name is shown with a Copy button, and Enter cancels.
+- It runs in `BEGIN READ WRITE … COMMIT`, so it also works on a read-only production session.
+- No `CASCADE`: if other tables reference this one, Postgres refuses and says so, rather than emptying them too.
+
+## 2026-10-15 · Foreign keys: preview and picker
+
+**Decision:**
+- Single-column foreign keys are read from `pg_constraint`; composite keys are ignored.
+- Values get a ↗ badge that opens the referenced row in a popover, with Open Table.
+- Editing such a cell opens a picker instead of a text field. It searches the referenced table across all columns: an empty term lists the first rows; otherwise the same `ILIKE` condition as ⌘F, `LIMIT 20`, 3 s timeout. Each result shows its key plus a few non-empty values, and the picked key becomes a normal pending edit.
+
+## 2026-10-15 · Image values
+
+**Decision:**
+- Detection only looks at the start of a value: bytea magic numbers (PNG, JPEG, GIF, WebP, TIFF), `data:image/`, base64 of those, and http(s) URLs with an image extension. It is cheap enough for every drawn cell (`make perf` includes it).
+- Double-click or the 🖼 badge opens a preview popover.
+- URLs are downloaded only on that click, with an ephemeral session, never in the background.
+
+## 2026-10-15 · Booleans and dates edited with controls
+
+**Decision:**
+- Column types from the structure query map to kinds (`TBKindForType`).
+- Booleans show a checkbox and "true"/"false" instead of `t`/`f`. A click on the checkbox, double-click or Enter toggles; NULL toggles to true, and Set NULL is in the context menu.
+- Date/time kinds open a popover with a graphical calendar (a clock for `time`) plus a precise text-and-stepper field.
+- `date`, `time` and `timestamp` have no time zone, so they are handled in UTC and round-trip exactly, also across DST changes. `timestamptz` is shown in the local zone and written with its offset.
+- Picking the same moment written differently (`+02` vs `+02:00`) isn't recorded as a change. Fractional seconds are dropped when a value is edited this way (`date_test`).
+
+## 2026-10-15 · Window colours for every connection
+
+**Decision:** any connection can have a frame colour, stored as `frame`; local databases keep theirs in user defaults by name. Production always has one (red by default) and also the badge. Older entries carried `color` on every connection, although it only applied to production. So `frame` falls back to `color` for production connections only, and other connections don't suddenly get a red frame (`ConnectionStore frameColorFor:`, tested in `store_test`).
+
 ## 2026-10-15 · Pinned tables
 
 **Decision:** right-click a table to pin it to a "Pinned" section at the top of the sidebar, in pin order. Pins are stored in user defaults, keyed by connection id and database. Rebuilding the list keeps the open table selected without reloading it.

@@ -1,4 +1,6 @@
 #import "GridView.h"
+#import "DatePicker.h"
+#import "ImageValue.h"
 #import "JSONInspector.h"
 #import "UI.h"
 
@@ -12,7 +14,36 @@ static NSString *const RowNumberColumn = @"#";
 @property (nonatomic, copy) NSAttributedString *text;
 @property (nonatomic, strong, nullable) NSColor *fill;
 @property (nonatomic) BOOL ring;
+@property (nonatomic, strong, nullable) NSImage *badge; // at the trailing edge: ↗ foreign key, 🖼 image
+@property (nonatomic, strong, nullable) NSImage *icon;  // at the leading edge: boolean checkbox
 @end
+
+static const CGFloat IconWidth = 22; // clickable area of the checkbox
+
+static const CGFloat BadgeWidth = 20; // clickable area of the badge
+
+// Empty checkbox for false, in a quiet grey.
+static NSImage *Checkbox(void) {
+    static NSImage *image;
+    if (!image) {
+        NSImageSymbolConfiguration *config = [[NSImageSymbolConfiguration configurationWithPointSize:11 weight:NSFontWeightRegular]
+            configurationByApplyingConfiguration:[NSImageSymbolConfiguration configurationWithHierarchicalColor:NSColor.tertiaryLabelColor]];
+        image = [[NSImage imageWithSystemSymbolName:@"square" accessibilityDescription:nil] imageWithSymbolConfiguration:config];
+    }
+    return image;
+}
+
+// Accent-coloured SF Symbol for cell badges, made once.
+static NSImage *Badge(NSString *symbol) {
+    static NSMutableDictionary<NSString *, NSImage *> *cache;
+    if (!cache) cache = [NSMutableDictionary new];
+    if (!cache[symbol]) {
+        NSImageSymbolConfiguration *config = [[NSImageSymbolConfiguration configurationWithPointSize:10 weight:NSFontWeightSemibold]
+            configurationByApplyingConfiguration:[NSImageSymbolConfiguration configurationWithHierarchicalColor:NSColor.controlAccentColor]];
+        cache[symbol] = [[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil] imageWithSymbolConfiguration:config];
+    }
+    return cache[symbol];
+}
 
 @implementation GridCellView
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -24,6 +55,8 @@ static NSString *const RowNumberColumn = @"#";
 - (void)setText:(NSAttributedString *)text { _text = [text copy]; self.needsDisplay = YES; }
 - (void)setFill:(NSColor *)fill { _fill = fill; self.needsDisplay = YES; }
 - (void)setRing:(BOOL)ring { _ring = ring; self.needsDisplay = YES; }
+- (void)setBadge:(NSImage *)badge { _badge = badge; self.needsDisplay = YES; }
+- (void)setIcon:(NSImage *)icon { _icon = icon; self.needsDisplay = YES; }
 
 - (void)drawRect:(NSRect)rect {
     // AppKit redraws a whole row (all columns, ~6000 pt wide) when the grid scrolls sideways.
@@ -38,7 +71,18 @@ static NSString *const RowNumberColumn = @"#";
     NSAttributedString *text = _text;
     NSDictionary *attrs = text.length ? [text attributesAtIndex:0 effectiveRange:NULL] : @{};
     NSFont *font = attrs[NSFontAttributeName];
-    CGFloat width = NSWidth(self.bounds) - 16, line = ceil(font.ascender - font.descender + font.leading);
+    CGFloat left = _icon ? IconWidth : 8;
+    CGFloat width = NSWidth(self.bounds) - left - 8 - (_badge ? BadgeWidth - 4 : 0), line = ceil(font.ascender - font.descender + font.leading);
+    if (_icon) {
+        NSSize s = _icon.size;
+        NSRect r = NSMakeRect(6 + (14 - s.width) / 2, (NSHeight(self.bounds) - s.height) / 2, s.width, s.height);
+        [_icon drawInRect:r fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+    }
+    if (_badge) {
+        NSSize s = _badge.size;
+        NSRect r = NSMakeRect(NSWidth(self.bounds) - BadgeWidth + (BadgeWidth - s.width) / 2, (NSHeight(self.bounds) - s.height) / 2, s.width, s.height);
+        [_badge drawInRect:r fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
+    }
     // Cells use monospaced fonts, so the cut for the ellipsis is plain arithmetic. Letting the
     // typesetter truncate (NSStringDrawingTruncatesLastVisibleLine) took most of the drawing time.
     static NSMutableDictionary<NSFont *, NSNumber *> *charWidths;
@@ -51,7 +95,7 @@ static NSString *const RowNumberColumn = @"#";
         [cut appendAttributedString:[[NSAttributedString alloc] initWithString:@"…" attributes:attrs]];
         text = cut;
     }
-    [text drawWithRect:NSMakeRect(8, floor((NSHeight(self.bounds) - line) / 2), width, line) options:NSStringDrawingUsesLineFragmentOrigin];
+    [text drawWithRect:NSMakeRect(left, floor((NSHeight(self.bounds) - line) / 2), width, line) options:NSStringDrawingUsesLineFragmentOrigin];
     if (_ring) {
         [NSColor.controlAccentColor setStroke];
         NSBezierPath *path = [NSBezierPath bezierPathWithRect:NSInsetRect(self.bounds, 1, 1)];
@@ -129,6 +173,8 @@ static NSString *const RowNumberColumn = @"#";
         _inserted = [NSMutableArray new];
         _defaultColumns = [NSIndexSet new];
         _numericColumns = [NSIndexSet new];
+        _referenceColumns = [NSIndexSet new];
+        _columnKinds = @{};
         _columnColors = @{};
         _nullText = @"NULL";
         _showsRowNumbers = YES;
@@ -194,6 +240,7 @@ static NSString *const RowNumberColumn = @"#";
     NSMenu *menu = [NSMenu new];
     [menu addItemWithTitle:L(@"Set NULL") action:@selector(setNull:) keyEquivalent:@""].target = self;
     [menu addItemWithTitle:L(@"Copy") action:@selector(copyValue:) keyEquivalent:@"c"].target = self;
+    [menu addItemWithTitle:L(@"Show Referenced Row") action:@selector(openReference:) keyEquivalent:@""].target = self;
     return menu;
 }
 
@@ -380,17 +427,70 @@ static NSString *const RowNumberColumn = @"#";
 #pragma mark - Selection and cell editing
 
 - (void)clicked:(id)sender {
-    NSInteger col = [self dataColumn:_table.clickedColumn];
+    NSInteger row = _table.clickedRow, col = [self dataColumn:_table.clickedColumn];
     if (col >= 0) _selectedColumn = col;
     [self updateRing];
-    if (col >= 0 && _table.clickedRow >= 0 && _onSelectCell) _onSelectCell(_table.clickedRow, col);
+    if (col < 0 || row < 0) return;
+    // a click on the ↗ of a foreign key value
+    NSRect cell = [self cellRectForRow:row column:col];
+    NSPoint click = [_table convertPoint:NSApp.currentEvent.locationInWindow fromView:nil];
+    if (click.x < NSMinX(cell) + IconWidth && [self isBoolAtColumn:col] && _editable && ![_deleted containsIndex:row])
+        return [self toggleRow:row column:col]; // on the checkbox
+    if (click.x >= NSMaxX(cell) - BadgeWidth) { // on the badge
+        if ([self hasReferenceAtRow:row column:col] && _onOpenReference) return _onOpenReference(row, col, cell);
+        if (_onOpenImage && ImageValueDetected([self valueAtRow:row column:col])) return _onOpenImage(row, col, cell);
+    }
+    if (_onSelectCell) _onSelectCell(row, col);
 }
 
-// Double-click / Enter: JSON goes to the inspector, anything else is edited in place.
+// Boolean columns show "☑ false", wider than the t / f the width was estimated from.
+- (void)setColumnKinds:(NSDictionary<NSNumber *, NSString *> *)kinds {
+    _columnKinds = [kinds copy];
+    [kinds enumerateKeysAndObjectsUsingBlock:^(NSNumber *col, NSString *kind, BOOL *stop) {
+        NSInteger index = [self tableColumn:col.integerValue];
+        if ([kind isEqual:TBKindBool] && index < (NSInteger)self.table.tableColumns.count)
+            self.table.tableColumns[index].width = MAX(self.table.tableColumns[index].width, 84);
+    }];
+    [_table reloadData];
+}
+
+- (BOOL)isBoolAtColumn:(NSInteger)col {
+    return [_columnKinds[@(col)] isEqual:TBKindBool];
+}
+
+// true → false → true; NULL (or unset) → true. Set NULL is in the context menu.
+- (void)toggleRow:(NSInteger)row column:(NSInteger)col {
+    id value = [self valueAtRow:row column:col];
+    [self setValue:[value isEqual:@"t"] ? @"f" : @"t" row:row column:col];
+}
+
+- (NSRect)cellRectForRow:(NSInteger)row column:(NSInteger)col {
+    return [_table frameOfCellAtColumn:[self tableColumn:col] row:row];
+}
+
+- (BOOL)hasReferenceAtRow:(NSInteger)row column:(NSInteger)col {
+    return [_referenceColumns containsIndex:col] && [[self valueAtRow:row column:col] isKindOfClass:NSString.class];
+}
+
+// Double-click / Enter: foreign keys get the picker, JSON goes to the inspector, anything else is edited in place.
 - (void)activateRow:(NSInteger)row column:(NSInteger)col {
     if (row < 0 || col < 0 || row >= _table.numberOfRows || col >= (NSInteger)_result.columns.count) return;
+    if (_onPickReference && _editable && [_referenceColumns containsIndex:col] && ![_deleted containsIndex:row])
+        return _onPickReference(row, col, [self cellRectForRow:row column:col]);
+    NSString *kind = _columnKinds[@(col)];
+    if (kind && _editable && ![_deleted containsIndex:row]) {
+        if ([kind isEqual:TBKindBool]) return [self toggleRow:row column:col];
+        if (_onPickDate) return _onPickDate(row, col, [self cellRectForRow:row column:col], kind);
+    }
+    if (_onOpenImage && ImageValueDetected([self valueAtRow:row column:col])) // raw image bytes aren't for editing by hand
+        return _onOpenImage(row, col, [self cellRectForRow:row column:col]);
     if (_onOpenJSON && JSONIsValid([self valueAtRow:row column:col])) return _onOpenJSON(row, col);
     [self beginEditingRow:row column:col];
+}
+
+- (void)openReference:(id)sender {
+    NSInteger row = _table.clickedRow, col = [self dataColumn:_table.clickedColumn];
+    if (_onOpenReference) _onOpenReference(row, col, [self cellRectForRow:row column:col]);
 }
 
 - (void)tableViewSelectionDidChange:(NSNotification *)notification {
@@ -479,6 +579,10 @@ static NSString *const RowNumberColumn = @"#";
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     BOOL onCell = _table.clickedRow >= 0 && [self dataColumn:_table.clickedColumn] >= 0;
     if (item.action == @selector(copyValue:)) return onCell;
+    if (item.action == @selector(openReference:)) {
+        item.hidden = ![_referenceColumns containsIndex:[self dataColumn:_table.clickedColumn]];
+        return onCell && _onOpenReference && [self hasReferenceAtRow:_table.clickedRow column:[self dataColumn:_table.clickedColumn]];
+    }
     if (item.action == @selector(setNull:)) return _editable && onCell && ![_deleted containsIndex:_table.clickedRow];
     if (item.action == @selector(copy:)) return _table.selectedRowIndexes.count > 0;
     return YES;
@@ -555,6 +659,7 @@ static NSString *const RowNumberColumn = @"#";
         }];
         cell.fill = rowFill;
         cell.ring = NO;
+        cell.badge = cell.icon = nil;
         return cell;
     }
 
@@ -564,9 +669,11 @@ static NSString *const RowNumberColumn = @"#";
     BOOL isDefault = !value && [_defaultColumns containsIndex:col];
     BOOL placeholder = ![value isKindOfClass:NSString.class];
 
+    BOOL isBool = [self isBoolAtColumn:col] && !placeholder;
     NSString *text;
     if (isDefault) text = @"DEFAULT";
     else if (placeholder) text = _nullText;
+    else if (isBool) text = [value isEqual:@"t"] ? @"true" : @"false"; // Postgres prints t / f
     else {
         // Only what fits in the column (monospace: ~7.2 pt per character) gets laid out.
         NSUInteger fits = (NSUInteger)(column.width / 7) + 2;
@@ -591,6 +698,10 @@ static NSString *const RowNumberColumn = @"#";
     cell.text = shown;
     cell.fill = rowFill ?: (edited ? Theme.changed : nil);
     cell.ring = row == _ringRow && col == _selectedColumn && !deleted;
+    cell.icon = isBool ? ([value isEqual:@"t"] ? Badge(@"checkmark.square.fill") : Checkbox()) : nil;
+    cell.badge = placeholder ? nil
+               : [_referenceColumns containsIndex:col] ? Badge(@"arrow.up.right")
+               : _onOpenImage && ImageValueDetected(value) ? Badge(@"photo") : nil;
     return cell;
 }
 

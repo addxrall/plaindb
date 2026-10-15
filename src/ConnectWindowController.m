@@ -1,5 +1,6 @@
 #import "ConnectWindowController.h"
 #import "ConnectionStore.h"
+#import "Connector.h"
 #import "PGConnection.h"
 #import "SSHTunnel.h"
 #import "UI.h"
@@ -32,7 +33,7 @@ static NSString *HexFromColor(NSColor *color) {
 // ring 2 pt outside it, as in the design. The custom swatch is a colour wheel; its ring shows the chosen colour.
 @interface SwatchButton : NSButton
 @property (nonatomic, copy) NSString *hex;
-@property (nonatomic) BOOL custom, selectedSwatch;
+@property (nonatomic) BOOL custom, none, selectedSwatch; // none: "no colour", a crossed-out circle
 @end
 
 @implementation SwatchButton
@@ -46,6 +47,19 @@ static NSString *HexFromColor(NSColor *color) {
         [ring stroke];
     }
     NSBezierPath *circle = [NSBezierPath bezierPathWithOvalInRect:dot];
+    if (self.none) {
+        NSColor *ink = self.selectedSwatch ? NSColor.labelColor : NSColor.tertiaryLabelColor;
+        [ink setStroke];
+        NSBezierPath *outline = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(dot, 0.75, 0.75)];
+        outline.lineWidth = 1.5;
+        [outline stroke];
+        NSBezierPath *slash = [NSBezierPath bezierPath];
+        [slash moveToPoint:NSMakePoint(NSMinX(dot) + 4, NSMinY(dot) + 4)];
+        [slash lineToPoint:NSMakePoint(NSMaxX(dot) - 4, NSMaxY(dot) - 4)];
+        slash.lineWidth = 1.5;
+        [slash stroke];
+        return;
+    }
     if (self.custom) {
         NSArray *hues = @[@"#ff3b30", @"#ff9500", @"#ffcc00", @"#34c759", @"#00c7be", @"#0a84ff", @"#af52de", @"#ff2d55", @"#ff3b30"];
         NSMutableArray *colors = [NSMutableArray new];
@@ -102,6 +116,7 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     NSTextField *_statusLabel;
     // local databases
     NSView *_tilesView;
+    NSArray<NSString *> *_localNames;
     NSProgressIndicator *_localSpinner;
     NSTextField *_localStatus;
 }
@@ -216,10 +231,11 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     _production = [NSButton checkboxWithTitle:L(@"Production: read-only, writes need confirmation") target:self action:@selector(productionToggled:)];
 
     NSMutableArray *swatches = [NSMutableArray new];
-    NSArray *colors = [FrameColors() arrayByAddingObject:@[@"", L(@"Custom color")]];
+    NSArray *colors = [[@[@[@"", L(@"No color")]] arrayByAddingObjectsFromArray:FrameColors()] arrayByAddingObject:@[@"", L(@"Custom color")]];
     for (NSArray *c in colors) {
         SwatchButton *swatch = [SwatchButton new];
         swatch.hex = c[0];
+        swatch.none = c == colors.firstObject;
         swatch.custom = c == colors.lastObject;
         swatch.toolTip = c[1];
         swatch.bordered = NO;
@@ -330,7 +346,39 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     return view;
 }
 
+// Right-click on a local database: its window frame colour (the tile icon shows it too).
+- (NSMenu *)colorMenuForDatabase:(NSString *)database {
+    NSMenu *menu = [NSMenu new];
+    [menu addItem:[NSMenuItem sectionHeaderWithTitle:L(@"Window frame")]];
+    NSString *current = [ConnectionStore localFrameColorFor:database];
+    for (NSArray *c in [@[@[@"", L(@"No color")]] arrayByAddingObjectsFromArray:FrameColors()]) {
+        NSMenuItem *item = [menu addItemWithTitle:c[1] action:@selector(setLocalColor:) keyEquivalent:@""];
+        item.target = self;
+        item.representedObject = @[database, c[0]];
+        item.state = [c[0] isEqual:current] ? NSControlStateValueOn : NSControlStateValueOff;
+        NSColor *color = [c[0] length] ? [Theme colorFromHex:c[0] fallback:NSColor.clearColor] : nil;
+        item.image = [NSImage imageWithSize:NSMakeSize(12, 12) flipped:NO drawingHandler:^BOOL(NSRect r) {
+            NSBezierPath *dot = [NSBezierPath bezierPathWithOvalInRect:NSInsetRect(r, 1, 1)];
+            if (color) {
+                [color setFill];
+                [dot fill];
+            } else {
+                [NSColor.tertiaryLabelColor setStroke];
+                [dot stroke];
+            }
+            return YES;
+        }];
+    }
+    return menu;
+}
+
+- (void)setLocalColor:(NSMenuItem *)sender {
+    [ConnectionStore setLocalFrameColor:sender.representedObject[1] for:sender.representedObject[0]];
+    [self showTiles:_localNames];
+}
+
 - (void)showTiles:(NSArray<NSString *> *)names {
+    _localNames = names;
     for (NSView *v in [_tilesView.subviews copy]) [v removeFromSuperview];
     if (!names.count) return;
 
@@ -347,7 +395,9 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
             NSButton *tile = [NSButton buttonWithTitle:names[j] image:icon target:self action:@selector(openLocal:)];
             tile.imagePosition = NSImageAbove;
             tile.bordered = NO;
-            tile.contentTintColor = NSColor.controlAccentColor;
+            NSString *frame = [ConnectionStore localFrameColorFor:names[j]];
+            tile.contentTintColor = frame.length ? [Theme colorFromHex:frame fallback:NSColor.controlAccentColor] : NSColor.controlAccentColor;
+            tile.menu = [self colorMenuForDatabase:names[j]];
             tile.attributedTitle = [[NSAttributedString alloc] initWithString:names[j] attributes:@{
                 NSForegroundColorAttributeName: NSColor.labelColor,
                 NSFontAttributeName: [NSFont systemFontOfSize:12],
@@ -420,7 +470,8 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
         cell.imageView = icon;
         cell.textField = name;
     }
-    NSColor *tint = production ? Theme.red : NSColor.secondaryLabelColor;
+    NSString *frame = [ConnectionStore frameColorFor:c];
+    NSColor *tint = frame.length ? [Theme colorFromHex:frame fallback:Theme.red] : NSColor.secondaryLabelColor; // icon in the window's colour
     cell.imageView.image = [NSImage imageWithSystemSymbolName:ssh ? @"lock.shield" : @"cylinder" accessibilityDescription:nil];
     cell.imageView.contentTintColor = tint;
     cell.textField.stringValue = [c[@"name"] length] ? c[@"name"] : L(@"Untitled");
@@ -448,7 +499,7 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     _fields[@"password"].stringValue = _loadedPassword;
     _production.state = [c[@"production"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
     _production.enabled = _connectButton.enabled = has;
-    _frameColor = c[@"color"] ?: FrameColors()[0][0];
+    _frameColor = has ? [ConnectionStore frameColorFor:c] : @"";
     if (_colorPanelAttached) { // an open colour panel must not recolour the next connection
         NSColorPanel.sharedColorPanel.target = nil;
         _colorPanelAttached = NO;
@@ -457,13 +508,16 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     [self showStatus:@"" error:NO];
 }
 
+// Every connection can have a frame colour; production always has one, so "no colour" is hidden there.
 - (void)updateProductionRow {
-    _colorRow.hidden = _production.state != NSControlStateValueOn;
-    BOOL preset = NO;
+    BOOL production = _production.state == NSControlStateValueOn;
+    if (production && !_frameColor.length) _frameColor = FrameColors()[0][0];
+    BOOL preset = !_frameColor.length;
     for (NSArray *c in FrameColors()) preset |= [c[0] isEqual:_frameColor];
     for (SwatchButton *s in _swatches) {
         if (s.custom) s.hex = preset ? @"" : _frameColor;
-        s.selectedSwatch = s.custom ? !preset : [s.hex isEqual:_frameColor];
+        s.hidden = s.none && production;
+        s.selectedSwatch = s.custom ? !preset : s.none ? !_frameColor.length : [s.hex isEqual:_frameColor];
         s.needsDisplay = YES;
     }
 }
@@ -476,7 +530,8 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     }
     if (![c[@"name"] length]) c[@"name"] = [c[@"host"] length] ? c[@"host"] : L(@"Untitled");
     c[@"production"] = @(_production.state == NSControlStateValueOn);
-    c[@"color"] = _frameColor;
+    c[@"frame"] = _frameColor;
+    [c removeObjectForKey:@"color"]; // superseded by "frame"
 
     NSString *password = _fields[@"password"].stringValue;
     if (![password isEqual:_loadedPassword]) {
@@ -594,7 +649,7 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
 - (void)openLocal:(NSButton *)sender {
     if (_connecting) return;
     NSString *db = sender.title;
-    NSDictionary *info = @{@"id": @"local", @"name": db, @"user": NSUserName(), @"database": db};
+    NSDictionary *info = @{@"id": @"local", @"name": db, @"user": NSUserName(), @"database": db, @"frame": [ConnectionStore localFrameColorFor:db]};
     [_localSpinner startAnimation:nil];
     _localStatus.stringValue = [NSString stringWithFormat:L(@"Connecting to %@…"), db];
     [self connectWithInfo:info password:@"" done:^(NSError *error) {
@@ -623,37 +678,11 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
 // Sets up the tunnel (if any) and the connection in the background. `done` runs on the main thread: nil = window opened.
 - (void)connectWithInfo:(NSDictionary *)info password:(NSString *)password done:(void (^)(NSError *error))done {
     _connecting = YES;
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        NSError *error = nil;
-        NSString *host = info[@"host"], *port = [info[@"port"] length] ? info[@"port"] : @"5432";
-        SSHTunnel *tunnel = nil;
-        if ([info[@"sshHost"] length]) {
-            tunnel = [[SSHTunnel alloc] initWithSSHHost:info[@"sshHost"] remoteHost:host.length ? host : @"localhost" remotePort:port];
-            if (![tunnel start:&error]) tunnel = nil;
-            host = @"127.0.0.1";
-            port = @(tunnel.localPort).stringValue;
-        }
-
-        PGConnection *conn = nil;
-        if (!error) {
-            NSMutableDictionary *params = [@{@"port": port} mutableCopy];
-            if (host.length) params[@"host"] = host; // empty host = local socket
-            if ([info[@"user"] length]) params[@"user"] = info[@"user"];
-            if (password.length) params[@"password"] = password;
-            if ([info[@"database"] length]) params[@"dbname"] = info[@"database"];
-            conn = [[PGConnection alloc] initWithParams:params readOnly:[info[@"production"] boolValue]];
-            if (![conn open:&error]) {
-                conn = nil;
-                [tunnel stop];
-            }
-        }
-
-        dispatch_async(dispatch_get_main_queue(), ^{
-            self->_connecting = NO;
-            if (!conn) return done(error ?: DBError(L(@"Couldn't connect."), nil));
-            if (self.onConnected) self.onConnected(conn, tunnel, info);
-            done(nil);
-        });
+    TBConnect(info, password, ^(id<DBConnection> connection, SSHTunnel *tunnel, NSError *error) {
+        self->_connecting = NO;
+        if (!connection) return done(error);
+        if (self.onConnected) self.onConnected(connection, tunnel, info);
+        done(nil);
     });
 }
 

@@ -15,10 +15,14 @@
 | `src/DBConnection.h/.m` | `DBConnection` protocol, `DBResult`, `DBQuoteIdent`, `DBError`, `DBChangeStatements` (grid changes → SQL), `DBInlineParams` (preview), `L()` / `LN()` for UI strings |
 | `src/PGConnection.m` | Postgres implementation on `libpq`; schema read from `pg_catalog` |
 | `src/SSHTunnel.m` | `ssh -N -L` via `NSTask`, waiting for the port, reconnecting |
+| `src/Connector.m` | `TBConnect`: tunnel (if any) plus database connection in the background, used by the Connections window and the toolbar switcher |
 | `src/ConnectionStore.m` | plist in `~/Library/Application Support/PlainDB/connections.plist` and the Keychain (service `PlainDB`); falls back to data saved under the old name `Tabula` |
 | `src/UI.h/.m` | design tokens (`Theme`, light and dark), small view helpers, `TBRowView`, `TBCellView` |
 | `src/GridView.m` | grid for a `DBResult` (row numbers, numeric alignment, change colours); collects unsaved changes in the Data tab. Cells are `GridCellView`s that draw themselves (see DECISIONS.md, "Grid cells draw themselves") |
 | `src/SQLText.m` | SQL text view: highlighting, line number ruler |
+| `src/ReferencePopover.m` | foreign key popovers: referenced row preview and the row picker |
+| `src/DatePicker.m` | column kinds (bool, date, time, timestamp, timestamptz), Postgres date text ↔ `NSDate`, the date picker popover |
+| `src/ImageValue.m` | image detection and decoding for cell values, and the image preview popover |
 | `src/JSONInspector.m` | JSON side panel (an `NSSplitViewController` inspector item): tree and text modes; order-keeping JSON parser, pretty-printer and minifier |
 | `src/ConnectWindowController.m` | start window: Local tab (grid of databases on the local server) and Saved tab (list, form, production frame colour) |
 | `src/MainWindowController.m` | connection window: sidebar, toolbar tabs Data / Structure / SQL, pending changes bar, status bar |
@@ -27,6 +31,9 @@
 | `tests/pg_test.m` | `PGConnection` and `DBChangeStatements` against a real local Postgres |
 | `tests/grid_test.m` | `GridView`: swapping results, change model, ⌫, cell editing, JSON cells opening the inspector |
 | `tests/json_test.m` | JSON helpers: formatting keeps key order and string contents, parse tree |
+| `tests/store_test.m` | window frame colour rules, including older saved connections |
+| `tests/image_test.m` | image detection and decoding (bytea hex, base64, data URI) |
+| `tests/date_test.m` | type → kind mapping and date/time round trips, time zones, DST |
 | `tests/check_strings.py` | every `L()`/`LN()` key is translated, with matching format specifiers |
 | `tests/perf_grid.m` | `make perf`: scroll timing, CPU and memory of the grid on a big page; fails above the 120 Hz frame budget |
 

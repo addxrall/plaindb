@@ -109,8 +109,10 @@ static NSString *Str(const char *s) {
 }
 
 - (DBResult *)tables:(NSError **)error {
+    // reltuples is the planner's estimate: free to read, -1 when the table was never analyzed (PG 14+).
     return [self execute:@"SELECT n.nspname, c.relname,"
-                          " CASE c.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'view' ELSE 'table' END"
+                          " CASE c.relkind WHEN 'v' THEN 'view' WHEN 'm' THEN 'view' ELSE 'table' END,"
+                          " CASE WHEN c.relkind IN ('r','p','m') AND c.reltuples >= 0 THEN c.reltuples::bigint END"
                           " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
                           " WHERE c.relkind IN ('r','p','v','m')"
                           "   AND n.nspname NOT IN ('pg_catalog','information_schema')"
@@ -134,6 +136,22 @@ static NSString *Str(const char *s) {
                           "   AND a.attnum > 0 AND NOT a.attisdropped"
                           " ORDER BY a.attnum"
                   params:@[schema, table] error:error];
+}
+
+- (DBResult *)foreignKeysInSchema:(NSString *)schema table:(NSString *)table error:(NSError **)error {
+    return [self execute:@"SELECT a.attname, nf.nspname, cf.relname, af.attname"
+                          " FROM pg_constraint con"
+                          " JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace"
+                          " JOIN pg_class cf ON cf.oid = con.confrelid JOIN pg_namespace nf ON nf.oid = cf.relnamespace"
+                          " JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]"
+                          " JOIN pg_attribute af ON af.attrelid = con.confrelid AND af.attnum = con.confkey[1]"
+                          " WHERE con.contype = 'f' AND array_length(con.conkey, 1) = 1 AND n.nspname = $1 AND c.relname = $2"
+                          " ORDER BY a.attnum"
+                  params:@[schema, table] error:error];
+}
+
+- (DBResult *)databases:(NSError **)error {
+    return [self execute:@"SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname" params:nil error:error];
 }
 
 - (NSString *)searchConditionForColumns:(NSArray<NSString *> *)columns {

@@ -78,6 +78,30 @@ int main(void) {
         [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
         [grid setValue:@"1" row:1 column:1]; // back to the original
 
+        // foreign key columns: editing opens the picker instead of a text field (only in editable grids)
+        __block NSInteger pickedColumn = -1;
+        grid.referenceColumns = [NSIndexSet indexSetWithIndex:2];
+        grid.onPickReference = ^(NSInteger row, NSInteger column, NSRect rect) { pickedColumn = column; };
+        [grid activateRow:0 column:2];
+        assert(pickedColumn == 2 && !Editor(grid));
+        grid.editable = NO;
+        pickedColumn = -1;
+        [grid activateRow:0 column:2];
+        assert(pickedColumn == -1);
+        grid.editable = YES;
+        grid.referenceColumns = [NSIndexSet new];
+
+        // boolean columns toggle t ↔ f instead of opening a text field; NULL toggles to true
+        grid.columnKinds = @{@0: @"bool"};
+        [grid setValue:@"t" row:2 column:0];
+        [grid activateRow:2 column:0];
+        assert([[grid valueAtRow:2 column:0] isEqual:@"f"] && !Editor(grid));
+        [grid setValue:NSNull.null row:2 column:0];
+        [grid activateRow:2 column:0];
+        assert([[grid valueAtRow:2 column:0] isEqual:@"t"]);
+        [grid setValue:@"2" row:2 column:0]; // back to the original
+        grid.columnKinds = @{};
+
         // ⌫ in the table must reach GridView through the responder chain
         [grid.table selectRowIndexes:[NSIndexSet indexSetWithIndex:2] byExtendingSelection:NO];
         NSEvent *backspace = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0
