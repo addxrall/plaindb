@@ -143,6 +143,11 @@
 **Decision:** every value is read and sent as text or `NULL`.
 **Consequences:** one way to display and edit all types. `bytea` shows up as hex.
 
+## 2026-10-15 · MIT License
+
+**Decision:** PlainDB is fully open source under MIT: anyone may use, modify and redistribute it, commercially too, keeping the copyright notice.
+**Rejected:** GPL, which would require derived apps to be open as well; public-domain dedications (Unlicense, 0BSD), which aren't recognised everywhere and are rarer in practice.
+
 ## 2026-10-15 · Repository in English
 
 **Decision:** commits, README, docs and code comments are in English.

@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  macOS · Objective-C / AppKit · PostgreSQL · English &amp; Polish
+  macOS · Objective-C / AppKit · PostgreSQL · English &amp; Polish · MIT License
 </p>
 
 <p align="center">
@@ -77,3 +77,7 @@ UI strings are written in English in the code (`L(@"…")`, plurals with `LN(@"%
 - Long-running queries can't be cancelled.
 
 Technical details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Design decisions: [docs/DECISIONS.md](docs/DECISIONS.md).
+
+## License
+
+PlainDB is open source under the [MIT License](LICENSE): use it, change it, ship it, commercially or not. Keep the copyright notice.
