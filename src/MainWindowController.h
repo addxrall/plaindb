@@ -5,10 +5,12 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-// Okno jednego połączenia: lista tabel po lewej, zakładki Dane / Struktura / SQL po prawej.
+// Window for one connection: table list on the left, Data / Structure / SQL tabs on the right.
 @interface MainWindowController : NSWindowController <NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate>
 @property (nonatomic, copy, nullable) void (^onClose)(MainWindowController *controller);
 - (instancetype)initWithConnection:(id<DBConnection>)connection tunnel:(nullable SSHTunnel *)tunnel info:(NSDictionary *)info;
+// Asks whether to discard unsaved changes. YES = OK to continue (also when there is nothing to lose).
+- (BOOL)confirmDiscard;
 @end
 
 NS_ASSUME_NONNULL_END

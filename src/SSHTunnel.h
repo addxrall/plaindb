@@ -2,15 +2,15 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-// Tunel przez systemowy /usr/bin/ssh, więc działają ~/.ssh/config, klucze, agent i ProxyJump.
-// Jeśli ssh padnie po zestawieniu tunelu, uruchamia go ponownie na tym samym porcie lokalnym.
+// Tunnel through the system /usr/bin/ssh, so ~/.ssh/config, keys, the agent and ProxyJump all work.
+// If ssh dies after the tunnel was established, it is restarted on the same local port.
 @interface SSHTunnel : NSObject
 @property (nonatomic, readonly) uint16_t localPort;
-// Wołane na głównym wątku przy zmianie stanu („połączony”, „wznawiam…”).
-@property (nonatomic, copy, nullable) void (^onStatus)(NSString *status);
+// Called on the main thread when the state changes: YES = connected, NO = dropped, reconnecting.
+@property (nonatomic, copy, nullable) void (^onStatus)(BOOL connected);
 
 - (instancetype)initWithSSHHost:(NSString *)sshHost remoteHost:(NSString *)host remotePort:(NSString *)port;
-// Blokuje, dopóki port lokalny nie przyjmuje połączeń albo ssh się nie wyłoży. Nie wołaj z głównego wątku.
+// Blocks until the local port accepts connections or ssh fails. Don't call on the main thread.
 - (BOOL)start:(NSError **)error;
 - (void)stop;
 @end

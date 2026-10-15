@@ -1,6 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import "ConnectWindowController.h"
 #import "MainWindowController.h"
+#import "SettingsWindowController.h"
 #import "SSHTunnel.h"
 
 @interface AppDelegate : NSObject <NSApplicationDelegate>
@@ -8,6 +9,7 @@
 
 @implementation AppDelegate {
     ConnectWindowController *_connect;
+    SettingsWindowController *_settings;
     NSMutableArray<MainWindowController *> *_windows;
 }
 
@@ -36,42 +38,58 @@
     [_connect showWindow:nil];
 }
 
+- (void)showSettings:(id)sender {
+    if (!_settings) _settings = [SettingsWindowController new];
+    [_settings showWindow:nil];
+}
+
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)visible {
     if (!visible) [self showConnections:nil];
     return YES;
 }
 
+- (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)sender {
+    for (MainWindowController *c in _windows)
+        if (![c confirmDiscard]) return NSTerminateCancel;
+    return NSTerminateNow;
+}
+
 - (void)applicationWillTerminate:(NSNotification *)notification {
-    for (MainWindowController *c in [_windows copy]) [c.window close]; // zamyka tunele ssh
+    for (MainWindowController *c in [_windows copy]) [c.window close]; // closes ssh tunnels
 }
 
 - (NSMenu *)buildMenu {
     NSMenu *bar = [NSMenu new];
 
-    NSMenu *app = [self submenu:@"Tabula" in:bar];
-    [app addItemWithTitle:@"O programie Tabula" action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
+    NSMenu *app = [self submenu:@"PlainDB" in:bar];
+    [app addItemWithTitle:L(@"About PlainDB") action:@selector(orderFrontStandardAboutPanel:) keyEquivalent:@""];
     [app addItem:NSMenuItem.separatorItem];
-    [app addItemWithTitle:@"Ukryj Tabulę" action:@selector(hide:) keyEquivalent:@"h"];
-    [app addItemWithTitle:@"Zakończ Tabulę" action:@selector(terminate:) keyEquivalent:@"q"];
+    [app addItemWithTitle:L(@"Settings…") action:@selector(showSettings:) keyEquivalent:@","];
+    [app addItem:NSMenuItem.separatorItem];
+    [app addItemWithTitle:L(@"Hide PlainDB") action:@selector(hide:) keyEquivalent:@"h"];
+    [app addItemWithTitle:L(@"Quit PlainDB") action:@selector(terminate:) keyEquivalent:@"q"];
 
-    NSMenu *file = [self submenu:@"Plik" in:bar];
-    [file addItemWithTitle:@"Połączenia…" action:@selector(showConnections:) keyEquivalent:@"n"];
-    [file addItemWithTitle:@"Zamknij okno" action:@selector(performClose:) keyEquivalent:@"w"];
+    NSMenu *file = [self submenu:L(@"File") in:bar];
+    [file addItemWithTitle:L(@"Connections…") action:@selector(showConnections:) keyEquivalent:@"n"];
+    [file addItemWithTitle:L(@"Close Window") action:@selector(performClose:) keyEquivalent:@"w"];
 
-    NSMenu *edit = [self submenu:@"Edycja" in:bar];
-    [edit addItemWithTitle:@"Cofnij" action:@selector(undo:) keyEquivalent:@"z"];
-    [edit addItemWithTitle:@"Powtórz" action:@selector(redo:) keyEquivalent:@"Z"];
+    NSMenu *edit = [self submenu:L(@"Edit") in:bar];
+    [edit addItemWithTitle:L(@"Undo") action:@selector(undo:) keyEquivalent:@"z"];
+    [edit addItemWithTitle:L(@"Redo") action:@selector(redo:) keyEquivalent:@"Z"];
     [edit addItem:NSMenuItem.separatorItem];
-    [edit addItemWithTitle:@"Wytnij" action:@selector(cut:) keyEquivalent:@"x"];
-    [edit addItemWithTitle:@"Kopiuj" action:@selector(copy:) keyEquivalent:@"c"];
-    [edit addItemWithTitle:@"Wklej" action:@selector(paste:) keyEquivalent:@"v"];
-    [edit addItemWithTitle:@"Zaznacz wszystko" action:@selector(selectAll:) keyEquivalent:@"a"];
+    [edit addItemWithTitle:L(@"Cut") action:@selector(cut:) keyEquivalent:@"x"];
+    [edit addItemWithTitle:L(@"Copy") action:@selector(copy:) keyEquivalent:@"c"];
+    [edit addItemWithTitle:L(@"Paste") action:@selector(paste:) keyEquivalent:@"v"];
+    [edit addItemWithTitle:L(@"Select All") action:@selector(selectAll:) keyEquivalent:@"a"];
+    [edit addItem:NSMenuItem.separatorItem];
+    [edit addItemWithTitle:L(@"Find…") action:NSSelectorFromString(@"showFind:") keyEquivalent:@"f"];
 
-    NSMenu *query = [self submenu:@"Zapytanie" in:bar];
-    [query addItemWithTitle:@"Uruchom / Odśwież" action:NSSelectorFromString(@"runQuery:") keyEquivalent:@"r"];
+    NSMenu *query = [self submenu:L(@"Query") in:bar];
+    [query addItemWithTitle:L(@"Run / Refresh") action:NSSelectorFromString(@"runQuery:") keyEquivalent:@"r"];
+    [query addItemWithTitle:L(@"Save Changes") action:NSSelectorFromString(@"saveChanges:") keyEquivalent:@"s"];
 
-    NSMenu *window = [self submenu:@"Okno" in:bar];
-    [window addItemWithTitle:@"Minimalizuj" action:@selector(performMiniaturize:) keyEquivalent:@"m"];
+    NSMenu *window = [self submenu:L(@"Window") in:bar];
+    [window addItemWithTitle:L(@"Minimize") action:@selector(performMiniaturize:) keyEquivalent:@"m"];
     NSApp.windowsMenu = window;
     return bar;
 }

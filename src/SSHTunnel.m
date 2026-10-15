@@ -45,11 +45,11 @@ static BOOL PortAccepts(uint16_t port) {
         return YES;
     }
     [self stop];
-    if (error) *error = DBError([@"Tunel SSH: " stringByAppendingString:message], nil);
+    if (error) *error = DBError([NSString stringWithFormat:L(@"SSH tunnel: %@"), message], nil);
     return NO;
 }
 
-// Zwraca nil, gdy tunel działa, albo komunikat błędu.
+// Returns nil when the tunnel is up, otherwise an error message.
 - (NSString *)launchAndWait {
     NSTask *task = [NSTask new];
     task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/ssh"];
@@ -60,7 +60,7 @@ static BOOL PortAccepts(uint16_t port) {
         @"-o", @"ServerAliveInterval=30",
         @"-o", @"ServerAliveCountMax=3",
         @"-o", @"ConnectTimeout=10",
-        @"-o", @"BatchMode=yes", // bez pytań o hasło: aplikacja nie ma terminala
+        @"-o", @"BatchMode=yes", // no password prompts: the app has no terminal
         @"--", _sshHost,
     ];
     NSPipe *stderrPipe = [NSPipe pipe];
@@ -70,40 +70,40 @@ static BOOL PortAccepts(uint16_t port) {
     task.terminationHandler = ^(NSTask *t) { [weakSelf taskDidExit:t]; };
 
     @synchronized (self) {
-        if (_stopped) return @"zatrzymany";
+        if (_stopped) return L(@"stopped");
         _task = task;
     }
     NSError *launchError = nil;
     if (![task launchAndReturnError:&launchError]) return launchError.localizedDescription;
 
-    for (int i = 0; i < 100; i++) { // do ~20 s: ConnectTimeout plus logowanie
+    for (int i = 0; i < 100; i++) { // up to ~20 s: ConnectTimeout plus login
         if (!task.running) {
             NSData *data = [stderrPipe.fileHandleForReading readDataToEndOfFile];
             NSString *err = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
             err = [err stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-            return err.length ? err : [NSString stringWithFormat:@"ssh zakończył się kodem %d", task.terminationStatus];
+            return err.length ? err : [NSString stringWithFormat:L(@"ssh exited with code %d"), task.terminationStatus];
         }
         if (PortAccepts(_localPort)) return nil;
         usleep(200 * 1000);
     }
     [task terminate];
-    return @"przekroczono czas oczekiwania na połączenie";
+    return L(@"timed out waiting for the connection");
 }
 
 - (void)taskDidExit:(NSTask *)task {
     @synchronized (self) {
         if (_stopped || !_established || task != _task) return;
     }
-    [self report:@"Tunel SSH: zerwany, wznawiam…"];
+    [self report:NO];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-        // Jeśli się nie uda, ssh znów się zakończy i taskDidExit spróbuje ponownie.
-        if (![self launchAndWait]) [self report:@"Tunel SSH: połączony"];
+        // If this fails, ssh exits again and taskDidExit retries.
+        if (![self launchAndWait]) [self report:YES];
     });
 }
 
-- (void)report:(NSString *)status {
+- (void)report:(BOOL)connected {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (self.onStatus) self.onStatus(status);
+        if (self.onStatus) self.onStatus(connected);
     });
 }
 

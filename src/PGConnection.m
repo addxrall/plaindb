@@ -17,10 +17,10 @@ static NSString *Str(const char *s) {
         NSMutableDictionary *p = [params mutableCopy];
         p[@"client_encoding"] = @"UTF8";
         p[@"connect_timeout"] = @"10";
-        p[@"application_name"] = @"Tabula";
+        p[@"application_name"] = @"PlainDB";
         if (readOnly) p[@"options"] = @"-c default_transaction_read_only=on";
         _params = p;
-        _queue = dispatch_queue_create("tabula.pg", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("plaindb.pg", DISPATCH_QUEUE_SERIAL);
     }
     return self;
 }
@@ -52,25 +52,25 @@ static NSString *Str(const char *s) {
 
 - (DBResult *)execute:(NSString *)sql params:(NSArray *)params error:(NSError **)error {
     if (!_conn) {
-        if (error) *error = DBError(@"Brak połączenia z bazą.", nil);
+        if (error) *error = DBError(L(@"Not connected to the database."), nil);
         return nil;
     }
-    // Np. po wznowieniu tunelu SSH. Nie ponawiamy zapytania, które padło w trakcie,
-    // bo mogło już coś zapisać. Ponawia się dopiero następne.
+    // E.g. after the SSH tunnel was restarted. A query that failed mid-flight is not retried,
+    // because it may already have written something. Only the next one reconnects.
     if (PQstatus(_conn) == CONNECTION_BAD) PQreset(_conn);
 
-    // ponytail: cały wynik ląduje w pamięci; przy ogromnych SELECT-ach w zakładce SQL
-    // trzeba będzie dodać limit albo PQsetSingleRowMode.
+    // ponytail: the whole result is loaded into memory; huge SELECTs in the SQL tab
+    // will need a limit or PQsetSingleRowMode.
     PGresult *res;
     if (params.count == 0) {
-        res = PQexec(_conn, sql.UTF8String); // pozwala na kilka instrukcji naraz
+        res = PQexec(_conn, sql.UTF8String); // allows several statements at once
     } else {
         NSMutableArray *strings = [NSMutableArray arrayWithCapacity:params.count];
         const char *values[params.count];
         for (NSUInteger i = 0; i < params.count; i++) {
             id p = params[i];
             NSString *s = p == NSNull.null ? nil : [p description];
-            if (s) [strings addObject:s]; // trzyma bufor UTF8String przy życiu
+            if (s) [strings addObject:s]; // keeps the UTF8String buffer alive
             values[i] = s.UTF8String;
         }
         res = PQexecParams(_conn, sql.UTF8String, (int)params.count, NULL, values, NULL, NULL, 0);
@@ -120,7 +120,7 @@ static NSString *Str(const char *s) {
 }
 
 - (DBResult *)columnsInSchema:(NSString *)schema table:(NSString *)table error:(NSError **)error {
-    // pg_catalog zamiast information_schema: ten drugi ukrywa klucze przed użytkownikiem z samym SELECT.
+    // pg_catalog instead of information_schema: the latter hides constraints from users with SELECT only.
     return [self execute:@"SELECT a.attname AS kolumna,"
                           " format_type(a.atttypid, a.atttypmod) AS typ,"
                           " CASE WHEN a.attnotnull THEN 'NOT NULL' ELSE '' END AS \"null\","
@@ -136,8 +136,14 @@ static NSString *Str(const char *s) {
                   params:@[schema, table] error:error];
 }
 
+- (NSString *)searchConditionForColumns:(NSArray<NSString *> *)columns {
+    NSMutableArray *parts = [NSMutableArray new];
+    for (NSString *c in columns) [parts addObject:[NSString stringWithFormat:@"%@::text ILIKE $1", DBQuoteIdent(c)]];
+    return [NSString stringWithFormat:@"(%@)", [parts componentsJoinedByString:@" OR "]];
+}
+
 - (DBResult *)indexesInSchema:(NSString *)schema table:(NSString *)table error:(NSError **)error {
-    return [self execute:@"SELECT indexdef FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 ORDER BY indexname"
+    return [self execute:@"SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = $1 AND tablename = $2 ORDER BY indexname"
                   params:@[schema, table] error:error];
 }
 

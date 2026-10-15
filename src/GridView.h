@@ -3,16 +3,54 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-// Siatka pokazująca DBResult. Kolumny budują się z wyniku, NULL jest szarą kursywą.
-@interface GridView : NSScrollView <NSTableViewDataSource, NSTableViewDelegate>
+// Grid showing a DBResult. Columns are built from the result, NULL is shown in grey italics,
+// numeric columns are right-aligned. With `editable` it collects changes (cell edits, new and
+// deleted rows) without sending them to the database.
+@interface GridView : NSScrollView <NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSMenuItemValidation>
 @property (nonatomic, readonly) NSTableView *table;
+// Setting a result clears unsaved changes.
 @property (nonatomic, strong, nullable) DBResult *result;
-// Ustawione = nagłówki kolumn są klikalne, a sortowanie robi wywołujący (np. ORDER BY w SQL).
+// When set, column headers are clickable and the caller does the sorting (e.g. ORDER BY in SQL).
 @property (nonatomic, copy, nullable) void (^onSort)(NSString *column, BOOL ascending);
 - (void)resetSort;
-@end
 
-// Komórka tabeli z polem tekstowym (i opcjonalnie ikoną), wyśrodkowana w pionie.
-NSTableCellView *TBCell(NSTableView *table, NSString *identifier, BOOL withImage);
+// Leading column with row numbers (on by default). Set before `result`.
+@property (nonatomic) BOOL showsRowNumbers;
+// Number shown for the first row minus one, e.g. the page offset.
+@property (nonatomic) NSInteger rowNumberOffset;
+// Text shown for SQL NULL (default "NULL").
+@property (nonatomic, copy) NSString *nullText;
+// Text colour per column index, for non-NULL values.
+@property (nonatomic, copy) NSDictionary<NSNumber *, NSColor *> *columnColors;
+// Search term marked in every cell where it occurs (ignoring case), or nil.
+@property (nonatomic, copy, nullable) NSString *highlight;
+
+@property (nonatomic) BOOL editable;
+// Columns with a default value: new rows show "DEFAULT" there instead of "NULL".
+@property (nonatomic, copy) NSIndexSet *defaultColumns;
+// Called whenever the set of unsaved changes changes.
+@property (nonatomic, copy, nullable) void (^onChange)(void);
+
+// row → (column → new value: NSString or NSNull)
+@property (nonatomic, readonly) NSDictionary<NSNumber *, NSDictionary<NSNumber *, id> *> *edits;
+@property (nonatomic, readonly) NSIndexSet *deletedRows;
+// column → value; a missing column means DEFAULT
+@property (nonatomic, readonly) NSArray<NSDictionary<NSNumber *, id> *> *insertedRows;
+@property (nonatomic, readonly) NSUInteger changeCount;     // number of changed rows
+@property (nonatomic, readonly) NSUInteger editedCellCount;
+
+- (void)addRow;
+- (void)deleteSelectedRows; // calling it again on deleted rows restores them
+- (void)discardChanges;
+
+// Double-click / Enter on a cell holding a JSON object or array calls this instead of inline editing.
+@property (nonatomic, copy, nullable) void (^onOpenJSON)(NSInteger row, NSInteger column);
+// Called when the user clicks a cell.
+@property (nonatomic, copy, nullable) void (^onSelectCell)(NSInteger row, NSInteger column);
+// Current value (NSString, NSNull, or nil for an unset column of a new row) and setting it as a pending edit.
+- (nullable id)valueAtRow:(NSInteger)row column:(NSInteger)column;
+- (void)updateValue:(id)value row:(NSInteger)row column:(NSInteger)column;
+- (BOOL)isRowDeleted:(NSInteger)row;
+@end
 
 NS_ASSUME_NONNULL_END

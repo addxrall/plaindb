@@ -1,0 +1,165 @@
+/* Polish UI. Keys are the English source strings from src/. Checked by tests/check_strings.py. */
+
+/* Menu */
+"About PlainDB" = "O programie PlainDB";
+"Settings…" = "Ustawienia…";
+"Hide PlainDB" = "Ukryj PlainDB";
+"Quit PlainDB" = "Zakończ PlainDB";
+"File" = "Plik";
+"Connections…" = "Połączenia…";
+"Close Window" = "Zamknij okno";
+"Edit" = "Edycja";
+"Undo" = "Cofnij";
+"Redo" = "Powtórz";
+"Cut" = "Wytnij";
+"Copy" = "Kopiuj";
+"Paste" = "Wklej";
+"Select All" = "Zaznacz wszystko";
+"Find…" = "Znajdź…";
+"Query" = "Zapytanie";
+"Run / Refresh" = "Uruchom / Odśwież";
+"Save Changes" = "Zapisz zmiany";
+"Window" = "Okno";
+"Minimize" = "Minimalizuj";
+
+/* Settings */
+"Settings" = "Ustawienia";
+"Language:" = "Język:";
+"System default" = "Systemowy";
+"Restart PlainDB to apply the new language." = "Uruchom PlainDB ponownie, żeby zmienić język.";
+"Restart Now" = "Uruchom ponownie";
+
+/* Connections window */
+"Connections" = "Połączenia";
+"Local" = "Lokalne";
+"Saved" = "Zapisane";
+"Local Postgres server" = "Lokalny serwer Postgres";
+"Refresh the database list" = "Odśwież listę baz";
+"No server found on port 5432" = "Nie znaleziono serwera na porcie 5432";
+"New connection" = "Nowe połączenie";
+"Untitled" = "Bez nazwy";
+"via %@" = "przez %@";
+"Name:" = "Nazwa:";
+"e.g. Production – API" = "np. Produkcja – API";
+"Database host:" = "Host bazy:";
+"Port:" = "Port:";
+"User:" = "Użytkownik:";
+"Password:" = "Hasło:";
+"Database:" = "Baza danych:";
+"SSH tunnel:" = "Tunel SSH:";
+"user@server or alias" = "user@serwer lub alias";
+"user@server or an alias from ~/.ssh/config. Empty: direct connection." = "user@serwer albo alias z ~/.ssh/config. Puste: połączenie bezpośrednie.";
+"Production: read-only, writes need confirmation" = "Produkcja: tylko odczyt, zapis po potwierdzeniu";
+"Window frame:" = "Ramka okna:";
+"Red" = "Czerwony";
+"Orange" = "Pomarańczowy";
+"Yellow" = "Żółty";
+"Green" = "Zielony";
+"Teal" = "Morski";
+"Blue" = "Niebieski";
+"Purple" = "Fioletowy";
+"Pink" = "Różowy";
+"Custom color" = "Własny kolor";
+"Save" = "Zapisz";
+"Connect" = "Połącz";
+"Connecting to %@…" = "Łączę z %@…";
+"Opening tunnel via %@…" = "Otwieram tunel przez %@…";
+"Couldn't connect." = "Nie udało się połączyć.";
+"Remove the connection “%@”?" = "Usunąć połączenie „%@”?";
+"This only removes the saved settings and the password in the Keychain. The database is not touched." = "Usuwa tylko zapisaną konfigurację i hasło z Keychain. Baza zostaje bez zmian.";
+"Remove" = "Usuń";
+"Cancel" = "Anuluj";
+
+/* Main window */
+"%@ via %@" = "%@ przez %@";
+"View" = "Widok";
+"Data" = "Dane";
+"Structure" = "Struktura";
+"Filter" = "Filtruj";
+"Tables" = "Tabele";
+"Pinned" = "Przypięte";
+"Pin" = "Przypnij";
+"Unpin" = "Odepnij";
+"Views" = "Widoki";
+"No table selected" = "Nie wybrano tabeli";
+"Choose a table or view from the list on the left." = "Wybierz tabelę lub widok z listy po lewej.";
+"PRODUCTION" = "PRODUKCJA";
+"read-only, writes need confirmation" = "tylko odczyt, zapis po potwierdzeniu";
+"Writes need confirmation" = "Zapis wymaga potwierdzenia";
+"Direct connection" = "Połączenie bezpośrednie";
+"SSH tunnel: connected" = "Tunel SSH: połączony";
+"SSH tunnel: dropped, reconnecting…" = "Tunel SSH: zerwany, wznawiam…";
+"Error" = "Błąd";
+"Unknown error" = "Nieznany błąd";
+
+/* Data tab */
+"read-only" = "tylko odczyt";
+"New row" = "Nowy wiersz";
+"Delete row" = "Usuń wiersz";
+"Delete or restore the selected rows (⌫)" = "Usuń lub przywróć zaznaczone wiersze (⌫)";
+"Previous page" = "Poprzednia strona";
+"Next page" = "Następna strona";
+"Refresh (⌘R)" = "Odśwież (⌘R)";
+"no rows" = "brak wierszy";
+"View: data is read-only." = "Widok: dane tylko do odczytu.";
+"Read-only: table %@ has no primary key, so a row can't be identified unambiguously." = "Tylko do odczytu: tabela %@ nie ma klucza głównego, więc nie da się jednoznacznie wskazać wiersza do zmiany.";
+"Loading %@…" = "Wczytywanie %@…";
+"Loading…" = "Wczytywanie…";
+"Loading failed" = "Błąd wczytywania";
+"Couldn't load %@" = "Nie udało się wczytać %@";
+"Try again" = "Spróbuj ponownie";
+"Set NULL" = "Ustaw NULL";
+"Discard" = "Odrzuć";
+"You have unsaved changes" = "Masz niezapisane zmiany";
+"%@. Discard them?" = "%@. Odrzucić je?";
+"Discard Changes" = "Odrzuć zmiany";
+"A row changed or disappeared in the meantime, nothing was saved. Refresh the data and try again." = "Wiersz zmienił się albo zniknął w międzyczasie, nic nie zapisano. Odśwież dane i spróbuj ponownie.";
+
+/* Search (⌘F) */
+"Search all columns, Enter to search" = "Szukaj we wszystkich kolumnach, Enter szuka";
+"Done" = "Gotowe";
+"%ld+ matching rows, see the next pages" = "%ld+ pasujących wierszy, zobacz kolejne strony";
+"The search took too long" = "Wyszukiwanie trwało za długo";
+"It was stopped after 15 s. Try a more specific term." = "Przerwano je po 15 s. Spróbuj bardziej konkretnej frazy.";
+
+/* Structure tab */
+"Columns" = "Kolumny";
+"Indexes" = "Indeksy";
+"Name" = "Nazwa";
+"Type" = "Typ";
+"Default" = "Domyślnie";
+"Definition" = "Definicja";
+"none" = "brak";
+
+/* JSON inspector */
+"JSON" = "JSON";
+"Tree" = "Drzewo";
+"Text" = "Tekst";
+"Format" = "Formatuj";
+"Apply" = "Zastosuj";
+"Close" = "Zamknij";
+"Valid JSON" = "Poprawny JSON";
+"Invalid JSON: %@" = "Niepoprawny JSON: %@";
+"Double-click a cell with JSON to see it here." = "Kliknij dwukrotnie komórkę z JSON-em, żeby ją tu zobaczyć.";
+"%@ · row %ld" = "%@ · wiersz %ld";
+"Query result · row %ld" = "Wynik zapytania · wiersz %ld";
+
+/* SQL tab */
+"Run" = "Uruchom";
+"Results will appear here. Run a query: ⌘R" = "Wynik pojawi się tutaj. Uruchom zapytanie: ⌘R";
+"Running…" = "Wykonywanie…";
+"Query executed" = "Zapytanie wykonane";
+"Query error" = "Błąd zapytania";
+
+/* Production confirmation */
+"This changes data on production" = "To zapytanie zmienia dane na produkcji";
+"Check the SQL before running it; this can't be undone." = "Sprawdź SQL przed wykonaniem; tej operacji nie da się cofnąć.";
+"%@ · %@ in one transaction. %@" = "%@ · %@ w jednej transakcji. %@";
+"Execute" = "Wykonaj";
+
+/* Database and SSH errors */
+"Not connected to the database." = "Brak połączenia z bazą.";
+"SSH tunnel: %@" = "Tunel SSH: %@";
+"stopped" = "zatrzymany";
+"ssh exited with code %d" = "ssh zakończył się kodem %d";
+"timed out waiting for the connection" = "przekroczono czas oczekiwania na połączenie";

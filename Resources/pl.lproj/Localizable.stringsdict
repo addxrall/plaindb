@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Polish plurals: one (1), few (2–4, 22–24…), many (0, 5–21…). Used through LN() in src/. -->
+<plist version="1.0">
+<dict>
+	<key>%lu rows</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu wiersz</string>
+			<key>few</key><string>%lu wiersze</string>
+			<key>many</key><string>%lu wierszy</string>
+			<key>other</key><string>%lu wierszy</string>
+		</dict>
+	</dict>
+	<key>%lu changes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu zmiana</string>
+			<key>few</key><string>%lu zmiany</string>
+			<key>many</key><string>%lu zmian</string>
+			<key>other</key><string>%lu zmian</string>
+		</dict>
+	</dict>
+	<key>%lu edits</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu edycja</string>
+			<key>few</key><string>%lu edycje</string>
+			<key>many</key><string>%lu edycji</string>
+			<key>other</key><string>%lu edycji</string>
+		</dict>
+	</dict>
+	<key>%lu new rows</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu nowy wiersz</string>
+			<key>few</key><string>%lu nowe wiersze</string>
+			<key>many</key><string>%lu nowych wierszy</string>
+			<key>other</key><string>%lu nowych wierszy</string>
+		</dict>
+	</dict>
+	<key>%lu deleted</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu usunięty</string>
+			<key>few</key><string>%lu usunięte</string>
+			<key>many</key><string>%lu usuniętych</string>
+			<key>other</key><string>%lu usuniętych</string>
+		</dict>
+	</dict>
+	<key>%lu tables</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu tabela</string>
+			<key>few</key><string>%lu tabele</string>
+			<key>many</key><string>%lu tabel</string>
+			<key>other</key><string>%lu tabel</string>
+		</dict>
+	</dict>
+	<key>%lu views</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu widok</string>
+			<key>few</key><string>%lu widoki</string>
+			<key>many</key><string>%lu widoków</string>
+			<key>other</key><string>%lu widoków</string>
+		</dict>
+	</dict>
+	<key>%lu columns</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu kolumna</string>
+			<key>few</key><string>%lu kolumny</string>
+			<key>many</key><string>%lu kolumn</string>
+			<key>other</key><string>%lu kolumn</string>
+		</dict>
+	</dict>
+	<key>%lu indexes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu indeks</string>
+			<key>few</key><string>%lu indeksy</string>
+			<key>many</key><string>%lu indeksów</string>
+			<key>other</key><string>%lu indeksów</string>
+		</dict>
+	</dict>
+	<key>%lu statements</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu instrukcja</string>
+			<key>few</key><string>%lu instrukcje</string>
+			<key>many</key><string>%lu instrukcji</string>
+			<key>other</key><string>%lu instrukcji</string>
+		</dict>
+	</dict>
+	<key>%lu matching rows</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu pasujący wiersz</string>
+			<key>few</key><string>%lu pasujące wiersze</string>
+			<key>many</key><string>%lu pasujących wierszy</string>
+			<key>other</key><string>%lu pasujących wierszy</string>
+		</dict>
+	</dict>
+	<key>%lu databases</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu baza</string>
+			<key>few</key><string>%lu bazy</string>
+			<key>many</key><string>%lu baz</string>
+			<key>other</key><string>%lu baz</string>
+		</dict>
+	</dict>
+</dict>
+</plist>
