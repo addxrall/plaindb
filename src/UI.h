@@ -7,7 +7,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface Theme : NSObject
 @property (class, readonly) NSColor *head, *side, *fill, *rowSelection, *sideSelection, *grid;
 @property (class, readonly) NSColor *changed, *changedDot, *added, *deleted;
-@property (class, readonly) NSColor *red, *green, *orange, *productionBanner, *errorFill, *errorBorder, *editor;
+@property (class, readonly) NSColor *red, *green, *orange, *productionBanner, *errorFill, *errorBorder, *editor, *findHighlight;
 @property (class, readonly) NSColor *sqlKeyword, *sqlString, *sqlNumber, *sqlFunction, *sqlComment;
 + (NSFont *)mono:(CGFloat)size;
 + (NSColor *)colorFromHex:(nullable NSString *)hex fallback:(NSColor *)fallback;
@@ -17,6 +17,11 @@ NSTextField *TBLabel(NSString *text, CGFloat size, NSFontWeight weight, NSColor 
 NSTextField *TBWrappingLabel(NSString *text, CGFloat size, NSColor *color);
 NSButton *TBButton(NSString *title, id target, SEL action);
 NSButton *TBSymbolButton(NSString *symbol, NSString *tip, id target, SEL action);
+// Design's 26 × 22 pt icon button in a bar: white (dark: grey) box with a grey glyph; accent with a white glyph when `on`.
+@interface TBToolButton : NSButton
+@property (nonatomic) BOOL on;
++ (instancetype)buttonWithSymbol:(NSString *)symbol tip:(NSString *)tip target:(id)target action:(SEL)action;
+@end
 // Plain view filled with a (dynamic) colour.
 NSBox *TBPanel(NSColor *fill);
 NSBox *TBSeparator(void);
@@ -27,6 +32,9 @@ NSView *TBBadge(NSString *text, NSColor *textColor, NSColor *fill);
 @interface TBSwitcher : NSView
 - (instancetype)initWithViews:(NSArray<NSView *> *)views;
 @property (nonatomic) NSInteger selectedIndex;
+@end
+// Top-down coordinates, e.g. for a scroll view's document that should start at the top.
+@interface TBFlippedView : NSView
 @end
 // Vertical stack where every view is full width (minus the side insets); `grow` takes the remaining height.
 NSStackView *TBColumn(NSArray<NSView *> *views, NSView *_Nullable grow);

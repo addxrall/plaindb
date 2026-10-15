@@ -88,12 +88,13 @@
 
 **Decision:**
 - The sidebar shows the planner's estimate (`pg_class.reltuples`), which is free to read even on huge tables.
-- The open table gets an exact `count(*)` (with the active search's `WHERE`) after its page loads, under a 3 s `statement_timeout`. If that times out, the pager shows "of ~estimate".
+- The open table gets an exact `count(*)` (with the active search's `WHERE`) after its page loads, under a 3 s `statement_timeout`. If that times out, the pager shows "of ~estimate". When everything fits on one page the pager shows only `1–20`, as in the design.
 
 ## 2026-10-15 · Emptying a table
 
 **Decision:**
 - Right-click → "Empty Table…" runs `TRUNCATE`, but only after the table name is typed. The name is shown with a Copy button, and Enter cancels.
+- The confirmation is a custom sheet laid out as in the design: warning icon beside the title and what will happen (with the estimated row count), then the name, the field, and "Empty" (red text, dimmed until the name matches) next to the default "Cancel". `NSAlert` centres its content and can't put the icon beside the text.
 - It runs in `BEGIN READ WRITE … COMMIT`, so it also works on a read-only production session.
 - No `CASCADE`: if other tables reference this one, Postgres refuses and says so, rather than emptying them too.
 
@@ -101,7 +102,7 @@
 
 **Decision:**
 - Single-column foreign keys are read from `pg_constraint`; composite keys are ignored.
-- Values get a ↗ badge that opens the referenced row in a popover, with Open Table.
+- Values get a ↗ badge (a 15 pt accent-tinted square right after the value, as in the design) that opens the referenced row in a popover, with Open Table.
 - Editing such a cell opens a picker instead of a text field. It searches the referenced table across all columns: an empty term lists the first rows; otherwise the same `ILIKE` condition as ⌘F, `LIMIT 20`, 3 s timeout. Each result shows its key plus a few non-empty values, and the picked key becomes a normal pending edit.
 
 ## 2026-10-15 · Image values
@@ -115,8 +116,8 @@
 
 **Decision:**
 - Column types from the structure query map to kinds (`TBKindForType`).
-- Booleans show a checkbox and "true"/"false" instead of `t`/`f`. A click on the checkbox, double-click or Enter toggles; NULL toggles to true, and Set NULL is in the context menu.
-- Date/time kinds open a popover with a graphical calendar (a clock for `time`) plus a precise text-and-stepper field.
+- Booleans show a checkbox (drawn by the cell as in the design; NULL gets an empty one) and "true"/"false" instead of `t`/`f`. A click on the checkbox, double-click or Enter toggles; NULL toggles to true, and Set NULL is in the context menu.
+- Date/time kinds open a popover with a calendar plus a precise text-and-stepper field; `time` gets only the field. The calendar is a small view of its own (`CalendarView`), because `NSDatePicker`'s graphical style can't take the design's look. The field uses the `sv_SE` locale, which writes dates as `2026-10-03 10:20:29`, like Postgres.
 - `date`, `time` and `timestamp` have no time zone, so they are handled in UTC and round-trip exactly, also across DST changes. `timestamptz` is shown in the local zone and written with its offset.
 - Picking the same moment written differently (`+02` vs `+02:00`) isn't recorded as a change. Fractional seconds are dropped when a value is edited this way (`date_test`).
 
@@ -171,6 +172,8 @@
 
 **Scroll bars:** grids always use classic scroll bars (`NSScrollerStyleLegacy`), so a wide table has a horizontal bar you can see and grab, as the design's grid has. Overlay scroll bars appear only while scrolling.
 
+**New features section** (design update): the features first built without a design (JSON inspector, foreign keys, images, booleans and dates, find, pins and row counts, emptying a table, switcher, Settings) were drawn in the design afterwards, and the app follows it: badges and checkboxes drawn in the grid cells, a 250 pt find field with a hint, the match count and an accent magnifier button (`TBToolButton`), popovers at the design's sizes, the switcher menu with ✓, colour dots and the address on the right, and the design's Polish wording ("Opróżnij tabelę…", "Przypnij na górze").
+
 **Deviations:**
 - The connections window keeps the Local / Saved switch, which the design predates.
-- The page counter shows `1–200` without a total: counting rows on large production tables is too expensive.
+- Badges don't turn solid accent on hover: that would need mouse tracking over every grid cell.

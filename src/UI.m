@@ -30,6 +30,7 @@ static NSColor *Dynamic(uint32_t light, uint32_t dark) {
 + (NSColor *)errorFill { return Dynamic(0xfff4f3ff, 0x3a2121ff); }
 + (NSColor *)errorBorder { return Dynamic(0xf2cbc7ff, 0x5c2f2dff); }
 + (NSColor *)editor { return Dynamic(0xfcfcfdff, 0x1a1a1cff); }
++ (NSColor *)findHighlight { return Dynamic(0xffe066ff, 0x8a7314ff); }
 + (NSColor *)sqlKeyword { return Dynamic(0xa8329eff, 0xff7ab8ff); }
 + (NSColor *)sqlString { return Dynamic(0xc4351bff, 0xff8170ff); }
 + (NSColor *)sqlNumber { return Dynamic(0x2e4bd6ff, 0xd9c97cff); }
@@ -78,6 +79,38 @@ NSButton *TBSymbolButton(NSString *symbol, NSString *tip, id target, SEL action)
     return b;
 }
 
+@implementation TBToolButton
++ (instancetype)buttonWithSymbol:(NSString *)symbol tip:(NSString *)tip target:(id)target action:(SEL)action {
+    TBToolButton *b = [self buttonWithImage:[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:tip] target:target action:action];
+    b.bordered = NO;
+    b.toolTip = tip;
+    b.wantsLayer = YES;
+    b.symbolConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:11 weight:NSFontWeightMedium];
+    [NSLayoutConstraint activateConstraints:@[[b.widthAnchor constraintEqualToConstant:26], [b.heightAnchor constraintEqualToConstant:22]]];
+    b.on = NO;
+    return b;
+}
+
+- (BOOL)wantsUpdateLayer {
+    return YES;
+}
+
+- (void)setOn:(BOOL)on {
+    _on = on;
+    self.contentTintColor = on ? NSColor.whiteColor : NSColor.secondaryLabelColor;
+    self.needsDisplay = YES;
+}
+
+- (void)updateLayer {
+    [self.effectiveAppearance performAsCurrentDrawingAppearance:^{
+        self.layer.cornerRadius = 5;
+        self.layer.backgroundColor = (self->_on ? NSColor.controlAccentColor : Dynamic(0xffffffff, 0x3a3a3dff)).CGColor;
+        self.layer.borderWidth = self->_on ? 0 : 0.5;
+        self.layer.borderColor = Dynamic(0x00000029, 0xffffff0f).CGColor;
+    }];
+}
+@end
+
 NSBox *TBPanel(NSColor *fill) {
     NSBox *box = [NSBox new];
     box.boxType = NSBoxCustom;
@@ -120,6 +153,12 @@ NSView *TBBadge(NSString *text, NSColor *textColor, NSColor *fill) {
 - (void)setSelectedIndex:(NSInteger)index {
     _selectedIndex = index;
     [_views enumerateObjectsUsingBlock:^(NSView *v, NSUInteger i, BOOL *stop) { v.hidden = (NSInteger)i != index; }];
+}
+@end
+
+@implementation TBFlippedView
+- (BOOL)isFlipped {
+    return YES;
 }
 @end
 

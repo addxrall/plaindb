@@ -10,39 +10,81 @@ static NSString *const RowNumberColumn = @"#";
 // No NSTextField and no constraints: with hundreds of visible cells, a text field per cell
 // (its own layer, backing store and layout) made scrolling miss frames. Rows draw their
 // cells into one layer (see rowViewForRow).
+typedef NS_ENUM(NSInteger, CellBadge) { CellBadgeNone, CellBadgeReference, CellBadgeImage };
+typedef NS_ENUM(NSInteger, CellCheckbox) { CellCheckboxNone, CellCheckboxOff, CellCheckboxOn };
+
 @interface GridCellView : NSView
 @property (nonatomic, copy) NSAttributedString *text;
 @property (nonatomic, strong, nullable) NSColor *fill;
 @property (nonatomic) BOOL ring;
-@property (nonatomic, strong, nullable) NSImage *badge; // at the trailing edge: ↗ foreign key, 🖼 image
-@property (nonatomic, strong, nullable) NSImage *icon;  // at the leading edge: boolean checkbox
+@property (nonatomic) CellBadge badge;          // right after the text: ↗ foreign key, 🖼 image
+@property (nonatomic) CellCheckbox checkbox;    // before the text, for booleans
+@property (nonatomic, readonly) NSRect badgeRect; // where the badge was last drawn, for clicks
 @end
 
-static const CGFloat IconWidth = 22; // clickable area of the checkbox
+static const CGFloat CheckboxEnd = 27; // the checkbox and its gap: text starts here (8 + 13 + 6)
+static const CGFloat BadgeSize = 15, BadgeGap = 6;
 
-static const CGFloat BadgeWidth = 20; // clickable area of the badge
-
-// Empty checkbox for false, in a quiet grey.
-static NSImage *Checkbox(void) {
-    static NSImage *image;
-    if (!image) {
-        NSImageSymbolConfiguration *config = [[NSImageSymbolConfiguration configurationWithPointSize:11 weight:NSFontWeightRegular]
-            configurationByApplyingConfiguration:[NSImageSymbolConfiguration configurationWithHierarchicalColor:NSColor.tertiaryLabelColor]];
-        image = [[NSImage imageWithSystemSymbolName:@"square" accessibilityDescription:nil] imageWithSymbolConfiguration:config];
-    }
-    return image;
+static BOOL IsDark(NSView *view) {
+    return [view.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]] == NSAppearanceNameDarkAqua;
 }
 
-// Accent-coloured SF Symbol for cell badges, made once.
-static NSImage *Badge(NSString *symbol) {
-    static NSMutableDictionary<NSString *, NSImage *> *cache;
-    if (!cache) cache = [NSMutableDictionary new];
-    if (!cache[symbol]) {
-        NSImageSymbolConfiguration *config = [[NSImageSymbolConfiguration configurationWithPointSize:10 weight:NSFontWeightSemibold]
-            configurationByApplyingConfiguration:[NSImageSymbolConfiguration configurationWithHierarchicalColor:NSColor.controlAccentColor]];
-        cache[symbol] = [[NSImage imageWithSystemSymbolName:symbol accessibilityDescription:nil] imageWithSymbolConfiguration:config];
+// Design: 15 pt rounded square in a light accent tint, with the glyph in the accent colour.
+static void DrawBadge(CellBadge badge, NSRect r, BOOL dark) {
+    [[NSColor.controlAccentColor colorWithAlphaComponent:dark ? 0.2 : 0.1] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:r xRadius:4 yRadius:4] fill];
+    [NSColor.controlAccentColor set];
+    NSBezierPath *p = [NSBezierPath bezierPath];
+    p.lineCapStyle = NSLineCapStyleRound;
+    p.lineJoinStyle = NSLineJoinStyleRound;
+    if (badge == CellBadgeReference) { // ↗ in a 7 × 7 box
+        NSPoint o = NSMakePoint(NSMinX(r) + 4, NSMinY(r) + 4);
+        [p moveToPoint:NSMakePoint(o.x + 1.2, o.y + 5.8)];
+        [p lineToPoint:NSMakePoint(o.x + 5.6, o.y + 1.4)];
+        [p moveToPoint:NSMakePoint(o.x + 2.4, o.y + 1.2)];
+        [p lineToPoint:NSMakePoint(o.x + 5.8, o.y + 1.2)];
+        [p lineToPoint:NSMakePoint(o.x + 5.8, o.y + 4.6)];
+        p.lineWidth = 1.3;
+        [p stroke];
+    } else { // picture: frame, hills and a sun in a 10 × 8 box
+        NSPoint o = NSMakePoint(NSMinX(r) + 2.5, NSMinY(r) + 3.5);
+        NSBezierPath *frame = [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(o.x + 0.6, o.y + 0.6, 8.8, 6.8) xRadius:1.2 yRadius:1.2];
+        frame.lineWidth = 1.1;
+        [frame stroke];
+        [p moveToPoint:NSMakePoint(o.x + 1.6, o.y + 6.4)];
+        [p lineToPoint:NSMakePoint(o.x + 4, o.y + 3.8)];
+        [p lineToPoint:NSMakePoint(o.x + 5.6, o.y + 5.3)];
+        [p lineToPoint:NSMakePoint(o.x + 6.8, o.y + 4.2)];
+        [p lineToPoint:NSMakePoint(o.x + 8.4, o.y + 6.4)];
+        p.lineWidth = 1;
+        [p stroke];
+        [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(o.x + 6.1, o.y + 1.6, 1.6, 1.6)] fill];
     }
-    return cache[symbol];
+}
+
+// Design: 13 pt box, accent with a white tick when on, a white (dark: grey) box with a thin border when off.
+static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
+    NSBezierPath *box = [NSBezierPath bezierPathWithRoundedRect:r xRadius:3.5 yRadius:3.5];
+    if (on) {
+        [NSColor.controlAccentColor setFill];
+        [box fill];
+        NSBezierPath *tick = [NSBezierPath bezierPath];
+        [tick moveToPoint:NSMakePoint(NSMinX(r) + 3.3, NSMinY(r) + 6.7)];
+        [tick lineToPoint:NSMakePoint(NSMinX(r) + 5.5, NSMinY(r) + 8.8)];
+        [tick lineToPoint:NSMakePoint(NSMinX(r) + 9.8, NSMinY(r) + 3.9)];
+        tick.lineWidth = 1.6;
+        tick.lineCapStyle = NSLineCapStyleRound;
+        tick.lineJoinStyle = NSLineJoinStyleRound;
+        [NSColor.whiteColor setStroke];
+        [tick stroke];
+        return;
+    }
+    [(dark ? [NSColor colorWithSRGBRed:0x3a / 255.0 green:0x3a / 255.0 blue:0x3d / 255.0 alpha:1] : NSColor.whiteColor) setFill];
+    [box fill];
+    NSBezierPath *border = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(r, 0.5, 0.5) xRadius:3 yRadius:3];
+    border.lineWidth = 1;
+    [(dark ? [NSColor colorWithWhite:1 alpha:0.22] : [NSColor colorWithWhite:0 alpha:0.28]) setStroke];
+    [border stroke];
 }
 
 @implementation GridCellView
@@ -55,8 +97,8 @@ static NSImage *Badge(NSString *symbol) {
 - (void)setText:(NSAttributedString *)text { _text = [text copy]; self.needsDisplay = YES; }
 - (void)setFill:(NSColor *)fill { _fill = fill; self.needsDisplay = YES; }
 - (void)setRing:(BOOL)ring { _ring = ring; self.needsDisplay = YES; }
-- (void)setBadge:(NSImage *)badge { _badge = badge; self.needsDisplay = YES; }
-- (void)setIcon:(NSImage *)icon { _icon = icon; self.needsDisplay = YES; }
+- (void)setBadge:(CellBadge)badge { _badge = badge; self.needsDisplay = YES; }
+- (void)setCheckbox:(CellCheckbox)checkbox { _checkbox = checkbox; self.needsDisplay = YES; }
 
 - (void)drawRect:(NSRect)rect {
     // AppKit redraws a whole row (all columns, ~6000 pt wide) when the grid scrolls sideways.
@@ -68,21 +110,13 @@ static NSImage *Badge(NSString *symbol) {
         [_fill setFill];
         NSRectFillUsingOperation(self.bounds, NSCompositingOperationSourceOver);
     }
+    BOOL dark = IsDark(self);
     NSAttributedString *text = _text;
     NSDictionary *attrs = text.length ? [text attributesAtIndex:0 effectiveRange:NULL] : @{};
     NSFont *font = attrs[NSFontAttributeName];
-    CGFloat left = _icon ? IconWidth : 8;
-    CGFloat width = NSWidth(self.bounds) - left - 8 - (_badge ? BadgeWidth - 4 : 0), line = ceil(font.ascender - font.descender + font.leading);
-    if (_icon) {
-        NSSize s = _icon.size;
-        NSRect r = NSMakeRect(6 + (14 - s.width) / 2, (NSHeight(self.bounds) - s.height) / 2, s.width, s.height);
-        [_icon drawInRect:r fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
-    }
-    if (_badge) {
-        NSSize s = _badge.size;
-        NSRect r = NSMakeRect(NSWidth(self.bounds) - BadgeWidth + (BadgeWidth - s.width) / 2, (NSHeight(self.bounds) - s.height) / 2, s.width, s.height);
-        [_badge drawInRect:r fromRect:NSZeroRect operation:NSCompositingOperationSourceOver fraction:1 respectFlipped:YES hints:nil];
-    }
+    CGFloat height = NSHeight(self.bounds), left = _checkbox ? CheckboxEnd : 8;
+    CGFloat width = NSWidth(self.bounds) - left - 8 - (_badge ? BadgeSize + BadgeGap : 0), line = ceil(font.ascender - font.descender + font.leading);
+    if (_checkbox) DrawCheckbox(_checkbox == CellCheckboxOn, NSMakeRect(8, floor((height - 13) / 2), 13, 13), dark);
     // Cells use monospaced fonts, so the cut for the ellipsis is plain arithmetic. Letting the
     // typesetter truncate (NSStringDrawingTruncatesLastVisibleLine) took most of the drawing time.
     static NSMutableDictionary<NSFont *, NSNumber *> *charWidths;
@@ -95,7 +129,15 @@ static NSImage *Badge(NSString *symbol) {
         [cut appendAttributedString:[[NSAttributedString alloc] initWithString:@"…" attributes:attrs]];
         text = cut;
     }
-    [text drawWithRect:NSMakeRect(left, floor((NSHeight(self.bounds) - line) / 2), width, line) options:NSStringDrawingUsesLineFragmentOrigin];
+    [text drawWithRect:NSMakeRect(left, floor((height - line) / 2), width, line) options:NSStringDrawingUsesLineFragmentOrigin];
+    _badgeRect = NSZeroRect;
+    if (_badge) { // right after the text; after right-aligned (numeric) text that is the right edge
+        NSParagraphStyle *style = attrs[NSParagraphStyleAttributeName];
+        CGFloat textWidth = font ? MIN(text.length * charWidths[font].doubleValue, width) : width;
+        CGFloat x = style.alignment == NSTextAlignmentRight ? NSWidth(self.bounds) - 8 - BadgeSize : left + textWidth + BadgeGap;
+        _badgeRect = NSMakeRect(x, floor((height - BadgeSize) / 2), BadgeSize, BadgeSize);
+        DrawBadge(_badge, _badgeRect, dark);
+    }
     if (_ring) {
         [NSColor.controlAccentColor setStroke];
         NSBezierPath *path = [NSBezierPath bezierPathWithRect:NSInsetRect(self.bounds, 1, 1)];
@@ -431,12 +473,14 @@ static NSImage *Badge(NSString *symbol) {
     if (col >= 0) _selectedColumn = col;
     [self updateRing];
     if (col < 0 || row < 0) return;
-    // a click on the ↗ of a foreign key value
+    // a click on the checkbox of a boolean, or on the ↗ / 🖼 badge
     NSRect cell = [self cellRectForRow:row column:col];
     NSPoint click = [_table convertPoint:NSApp.currentEvent.locationInWindow fromView:nil];
-    if (click.x < NSMinX(cell) + IconWidth && [self isBoolAtColumn:col] && _editable && ![_deleted containsIndex:row])
-        return [self toggleRow:row column:col]; // on the checkbox
-    if (click.x >= NSMaxX(cell) - BadgeWidth) { // on the badge
+    if (click.x < NSMinX(cell) + CheckboxEnd - 2 && [self isBoolAtColumn:col] && _editable && ![_deleted containsIndex:row])
+        return [self toggleRow:row column:col];
+    GridCellView *view = [_table viewAtColumn:[self tableColumn:col] row:row makeIfNecessary:NO];
+    NSRect badge = NSInsetRect(view.badgeRect, -3, -4); // a little slack around the 15 pt badge
+    if (view.badge && NSPointInRect([view convertPoint:click fromView:_table], badge)) {
         if ([self hasReferenceAtRow:row column:col] && _onOpenReference) return _onOpenReference(row, col, cell);
         if (_onOpenImage && ImageValueDetected([self valueAtRow:row column:col])) return _onOpenImage(row, col, cell);
     }
@@ -449,7 +493,7 @@ static NSImage *Badge(NSString *symbol) {
     [kinds enumerateKeysAndObjectsUsingBlock:^(NSNumber *col, NSString *kind, BOOL *stop) {
         NSInteger index = [self tableColumn:col.integerValue];
         if ([kind isEqual:TBKindBool] && index < (NSInteger)self.table.tableColumns.count)
-            self.table.tableColumns[index].width = MAX(self.table.tableColumns[index].width, 84);
+            self.table.tableColumns[index].width = MAX(self.table.tableColumns[index].width, 72);
     }];
     [_table reloadData];
 }
@@ -659,7 +703,8 @@ static NSImage *Badge(NSString *symbol) {
         }];
         cell.fill = rowFill;
         cell.ring = NO;
-        cell.badge = cell.icon = nil;
+        cell.badge = CellBadgeNone;
+        cell.checkbox = CellCheckboxNone;
         return cell;
     }
 
@@ -669,7 +714,7 @@ static NSImage *Badge(NSString *symbol) {
     BOOL isDefault = !value && [_defaultColumns containsIndex:col];
     BOOL placeholder = ![value isKindOfClass:NSString.class];
 
-    BOOL isBool = [self isBoolAtColumn:col] && !placeholder;
+    BOOL isBool = [self isBoolAtColumn:col] && !isDefault; // NULL gets an empty box too
     NSString *text;
     if (isDefault) text = @"DEFAULT";
     else if (placeholder) text = _nullText;
@@ -682,7 +727,8 @@ static NSImage *Badge(NSString *symbol) {
     }
     NSMutableDictionary *attrs = [@{
         NSFontAttributeName: isDefault ? small : placeholder ? italic : regular,
-        NSForegroundColorAttributeName: placeholder ? NSColor.tertiaryLabelColor : (_columnColors[@(col)] ?: NSColor.labelColor),
+        NSForegroundColorAttributeName: placeholder ? NSColor.tertiaryLabelColor
+                                        : (_columnColors[@(col)] ?: isBool ? NSColor.secondaryLabelColor : NSColor.labelColor),
         NSParagraphStyleAttributeName: [_numericColumns containsIndex:col] ? right : left,
     } mutableCopy];
     if (deleted) attrs[NSStrikethroughStyleAttributeName] = @(NSUnderlineStyleSingle);
@@ -690,18 +736,17 @@ static NSImage *Badge(NSString *symbol) {
     if (_highlight.length && !placeholder) { // same matching as the search: anywhere, ignoring case
         NSRange search = NSMakeRange(0, text.length), found;
         while ((found = [text rangeOfString:_highlight options:NSCaseInsensitiveSearch range:search]).location != NSNotFound) {
-            [shown addAttributes:@{NSBackgroundColorAttributeName: NSColor.findHighlightColor, NSForegroundColorAttributeName: NSColor.blackColor}
-                           range:found];
+            [shown addAttribute:NSBackgroundColorAttributeName value:Theme.findHighlight range:found];
             search = NSMakeRange(NSMaxRange(found), text.length - NSMaxRange(found));
         }
     }
     cell.text = shown;
     cell.fill = rowFill ?: (edited ? Theme.changed : nil);
     cell.ring = row == _ringRow && col == _selectedColumn && !deleted;
-    cell.icon = isBool ? ([value isEqual:@"t"] ? Badge(@"checkmark.square.fill") : Checkbox()) : nil;
-    cell.badge = placeholder ? nil
-               : [_referenceColumns containsIndex:col] ? Badge(@"arrow.up.right")
-               : _onOpenImage && ImageValueDetected(value) ? Badge(@"photo") : nil;
+    cell.checkbox = !isBool ? CellCheckboxNone : [value isEqual:@"t"] ? CellCheckboxOn : CellCheckboxOff;
+    cell.badge = placeholder ? CellBadgeNone
+               : [_referenceColumns containsIndex:col] ? CellBadgeReference
+               : _onOpenImage && ImageValueDetected(value) ? CellBadgeImage : CellBadgeNone;
     return cell;
 }
 

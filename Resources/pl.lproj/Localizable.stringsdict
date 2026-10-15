@@ -133,19 +133,6 @@
 			<key>other</key><string>%lu instrukcji</string>
 		</dict>
 	</dict>
-	<key>%lu matching rows</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
-		<key>n</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key><string>lu</string>
-			<key>one</key><string>%lu pasujący wiersz</string>
-			<key>few</key><string>%lu pasujące wiersze</string>
-			<key>many</key><string>%lu pasujących wierszy</string>
-			<key>other</key><string>%lu pasujących wierszy</string>
-		</dict>
-	</dict>
 	<key>%lu databases</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>

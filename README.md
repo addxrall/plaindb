@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>A small, native Postgres client for macOS.</b><br>
-  Look at what a database contains, fix a value, run a query. Locally, over SSH, without the clutter.
+  Browse tables, fix a value, run a query. Locally or over SSH, without the clutter.
 </p>
 
 <p align="center">
@@ -14,10 +14,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" width="820" alt="PlainDB: SQL tab with a JSON value open in the inspector, on a production connection">
+  <img src="docs/screenshot.png" width="820" alt="PlainDB: an orders table on a production connection, with foreign key badges, boolean checkboxes and a JSON value open in the inspector">
 </p>
 
-PlainDB is written in Objective-C and AppKit, with no Electron and no web views. It's for quickly looking at what a database contains and fixing a value here and there. Everything runs locally: no accounts, no cloud. Production connections are read-only until you confirm a write, and they are framed in a colour you pick, so you always know where you are.
+PlainDB is written in Objective-C and AppKit, with no Electron and no web views. It's for quickly looking at what a database contains and fixing a value here and there: follow a foreign key to the row it points to, tick a boolean, pick a date from a calendar, edit a JSON value in a side panel. Everything runs locally: no accounts, no cloud. Production connections are read-only until you confirm a write, and they are framed in a colour you pick, so you always know where you are.
 
 ## Features
 
@@ -28,9 +28,9 @@ PlainDB is written in Objective-C and AppKit, with no Electron and no web views.
 - Sidebar with tables and views, with a filter and an estimated row count per table. Right-click a table to **pin** it to the top (remembered per connection and database) or to **empty** it (`TRUNCATE`, after typing its name).
 - **Foreign keys**: a ↗ next to the value opens the referenced row in a popover. Editing the value opens a search in the referenced table: type a name, pick the row, and its key goes into the cell.
 - **Images** stored as `bytea`, base64, `data:` URIs or image URLs get a 🖼; click it to see the picture, its size and dimensions.
-- **Typed editing**: booleans show a checkbox that toggles with a click. `date`, `time`, `timestamp` and `timestamptz` open a calendar and clock; `timestamptz` is shown in your time zone and written with its offset.
-- **Find (⌘F)**: search every column of the whole table (not just the loaded page), ignoring case; matches are highlighted. In the SQL editor ⌘F searches the query text.
-- **Data**: 200 rows per page, row numbers, click a header to sort, numbers right-aligned.
+- **Typed editing**: booleans show a checkbox that toggles with a click. `date`, `timestamp` and `timestamptz` open a calendar with a precise date and time field (`time` gets just the field); `timestamptz` is shown in your time zone and written with its offset.
+- **Find (⌘F or the magnifier)**: search every column of the whole table (not just the loaded page), ignoring case; matches are highlighted and counted. In the SQL editor ⌘F searches the query text.
+- **Data**: 200 rows per page with the table's total, row numbers, click a header to sort, numbers right-aligned.
 - **Editing** (tables with a primary key):
   - double-click or Enter edits a cell, Esc cancels;
   - `+` adds a row, ⌫ deletes or restores the selected rows;

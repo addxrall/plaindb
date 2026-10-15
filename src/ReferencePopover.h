@@ -15,7 +15,8 @@ NS_ASSUME_NONNULL_BEGIN
 @interface ReferencePicker : NSViewController
 @property (nonatomic, copy, nullable) void (^onSearch)(NSString *term); // "" = first rows; answer with showResult:
 @property (nonatomic, copy, nullable) void (^onPick)(id value);         // the key value as NSString, or NSNull
-- (instancetype)initWithTitle:(NSString *)title keyColumn:(NSString *)keyColumn;
+// Titled "column → table".
+- (instancetype)initWithColumn:(NSString *)column table:(NSString *)table keyColumn:(NSString *)keyColumn;
 - (void)showResult:(nullable DBResult *)result error:(nullable NSError *)error;
 @end
 

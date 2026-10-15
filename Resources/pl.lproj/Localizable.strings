@@ -25,8 +25,8 @@
 /* Settings */
 "Settings" = "Ustawienia";
 "Language:" = "Język:";
-"System default" = "Systemowy";
-"Restart PlainDB to apply the new language." = "Uruchom PlainDB ponownie, żeby zmienić język.";
+"System default" = "Domyślny systemu";
+"Restart PlainDB to apply the new language." = "Uruchom PlainDB ponownie, aby zmienić język.";
 "Restart Now" = "Uruchom ponownie";
 
 /* Connections window */
@@ -75,14 +75,14 @@
 "View" = "Widok";
 "Database" = "Baza";
 "Switch database or connection" = "Przełącz bazę lub połączenie";
-"Databases on this server" = "Bazy na tym serwerze";
+"Databases on %@" = "Bazy na %@";
 "Saved connections" = "Zapisane połączenia";
 "Data" = "Dane";
 "Structure" = "Struktura";
 "Filter" = "Filtruj";
 "Tables" = "Tabele";
 "Pinned" = "Przypięte";
-"Pin" = "Przypnij";
+"Pin to Top" = "Przypnij na górze";
 "Unpin" = "Odepnij";
 "Views" = "Widoki";
 "No table selected" = "Nie wybrano tabeli";
@@ -120,9 +120,12 @@
 "A row changed or disappeared in the meantime, nothing was saved. Refresh the data and try again." = "Wiersz zmienił się albo zniknął w międzyczasie, nic nie zapisano. Odśwież dane i spróbuj ponownie.";
 
 /* Search (⌘F) */
-"Search all columns, Enter to search" = "Szukaj we wszystkich kolumnach, Enter szuka";
+"Search Table" = "Szukaj w tabeli";
+"Find (⌘F)" = "Znajdź (⌘F)";
+"All columns of the whole table, ignoring case · Enter" = "Wszystkie kolumny całej tabeli, bez rozróżniania wielkości liter · Enter";
+"All columns, whole table · “%@”" = "Wszystkie kolumny, cała tabela · „%@”";
+"The table is empty" = "Tabela jest pusta";
 "Done" = "Gotowe";
-"%ld+ matching rows, see the next pages" = "%ld+ pasujących wierszy, zobacz kolejne strony";
 "The search took too long" = "Wyszukiwanie trwało za długo";
 "It was stopped after 15 s. Try a more specific term." = "Przerwano je po 15 s. Spróbuj bardziej konkretnej frazy.";
 
@@ -135,16 +138,19 @@
 "%@ of ~%@" = "%@ z ~%@";
 
 /* Emptying a table */
-"Empty Table…" = "Wyczyść tabelę…";
-"Empty Table" = "Wyczyść tabelę";
-"Empty the table %@?" = "Wyczyścić tabelę %@?";
-"This deletes all its rows (TRUNCATE) and can't be undone. Type the table name to confirm." = "Usunie wszystkie jej wiersze (TRUNCATE) i nie da się tego cofnąć. Wpisz nazwę tabeli, żeby potwierdzić.";
+"Empty Table…" = "Opróżnij tabelę…";
+"Empty" = "Opróżnij";
+"Empty the table %@?" = "Opróżnić tabelę %@?";
+"All rows (about %@) will be deleted with TRUNCATE. If other tables reference this table, Postgres will refuse and say why. This can't be undone." = "Wszystkie wiersze (około %@) zostaną usunięte poleceniem TRUNCATE. Jeśli inne tabele wskazują na tę tabelę, Postgres odmówi i poda powód. Tej operacji nie da się cofnąć.";
+"All rows will be deleted with TRUNCATE. If other tables reference this table, Postgres will refuse and say why. This can't be undone." = "Wszystkie wiersze zostaną usunięte poleceniem TRUNCATE. Jeśli inne tabele wskazują na tę tabelę, Postgres odmówi i poda powód. Tej operacji nie da się cofnąć.";
+"To confirm, type the table name:" = "Aby potwierdzić, wpisz nazwę tabeli:";
+"Copied" = "Skopiowano";
 
 /* Foreign keys */
 "Show Referenced Row" = "Pokaż powiązany rekord";
-"The referenced row doesn't exist." = "Powiązany rekord nie istnieje.";
+"The referenced row doesn't exist." = "Wskazany wiersz nie istnieje.";
+"%@ = %@ · from %@.%@" = "%@ = %@ · z %@.%@";
 "Open Table" = "Otwórz tabelę";
-"Choose a row from %@" = "Wybierz rekord z %@";
 "Search in any column" = "Szukaj w dowolnej kolumnie";
 "Searching…" = "Szukam…";
 "Nothing found" = "Nic nie znaleziono";
@@ -155,6 +161,7 @@
 "Today" = "Dziś";
 "Set" = "Ustaw";
 "Your time zone: %@" = "Twoja strefa czasowa: %@";
+"Su Mo Tu We Th Fr Sa" = "Nd Pn Wt Śr Cz Pt So";
 
 /* Image preview */
 "Copy Image" = "Kopiuj obraz";
@@ -183,7 +190,7 @@
 "Valid JSON" = "Poprawny JSON";
 "Invalid JSON: %@" = "Niepoprawny JSON: %@";
 "Double-click a cell with JSON to see it here." = "Kliknij dwukrotnie komórkę z JSON-em, żeby ją tu zobaczyć.";
-"%@ · row %ld" = "%@ · wiersz %ld";
+"row %ld" = "wiersz %ld";
 "Query result · row %ld" = "Wynik zapytania · wiersz %ld";
 
 /* SQL tab */

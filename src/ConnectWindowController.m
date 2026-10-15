@@ -20,15 +20,6 @@ static NSString *HexFromColor(NSColor *color) {
     return [NSString stringWithFormat:@"#%02lx%02lx%02lx", lround(c.redComponent * 255), lround(c.greenComponent * 255), lround(c.blueComponent * 255)];
 }
 
-@interface FlippedView : NSView
-@end
-
-@implementation FlippedView
-- (BOOL)isFlipped {
-    return YES;
-}
-@end
-
 // Round 16 pt colour swatch in a 23 pt frame (so swatches sit 7 pt apart); the selected one gets a
 // ring 2 pt outside it, as in the design. The custom swatch is a colour wheel; its ring shows the chosen colour.
 @interface SwatchButton : NSButton
@@ -323,7 +314,7 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     NSStackView *header = TBBar(@[title, _localSpinner], @[_localStatus, refresh], 32);
     header.edgeInsets = NSEdgeInsetsMake(0, 20, 0, 20);
 
-    _tilesView = [FlippedView new];
+    _tilesView = [TBFlippedView new];
     _tilesView.translatesAutoresizingMaskIntoConstraints = NO;
     NSScrollView *scroll = [NSScrollView new];
     scroll.drawsBackground = NO;

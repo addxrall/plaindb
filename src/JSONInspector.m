@@ -179,8 +179,14 @@ static void JSONHighlight(NSTextStorage *storage) {
                                                            options:0 error:nil];
     NSString *text = storage.string;
     NSRange all = NSMakeRange(0, text.length);
+    static NSMutableParagraphStyle *lines;
+    if (!lines) {
+        lines = [NSMutableParagraphStyle new];
+        lines.minimumLineHeight = lines.maximumLineHeight = 18;
+    }
     [storage beginEditing];
     [storage addAttribute:NSForegroundColorAttributeName value:NSColor.labelColor range:all];
+    [storage addAttribute:NSParagraphStyleAttributeName value:lines range:all];
     [tokens enumerateMatchesInString:text options:0 range:all usingBlock:^(NSTextCheckingResult *m, NSMatchingFlags f, BOOL *stop) {
         if ([m rangeAtIndex:1].location != NSNotFound) {
             BOOL key = [m rangeAtIndex:2].location != NSNotFound;
@@ -258,10 +264,12 @@ static void JSONHighlight(NSTextStorage *storage) {
     outlineScroll.hasVerticalScroller = YES;
     outlineScroll.autohidesScrollers = YES;
 
+    // design: no line numbers, 10 × 12 pt padding, 18 pt lines, a hairline above
     NSTextView *text;
-    NSScrollView *textScroll = SQLTextScrollView(&text, YES, YES);
+    NSScrollView *textScroll = SQLTextScrollView(&text, YES, NO);
     _text = text;
     _text.font = [Theme mono:12];
+    _text.textContainerInset = NSMakeSize(12 - _text.textContainer.lineFragmentPadding, 10); // line height: JSONHighlight
     _highlighter = [JSONHighlighter new];
     _text.textStorage.delegate = _highlighter; // JSON colours instead of SQL ones
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(textChanged:) name:NSTextDidChangeNotification object:_text];
@@ -270,7 +278,7 @@ static void JSONHighlight(NSTextStorage *storage) {
         [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"curlybraces" accessibilityDescription:nil]],
         TBLabel(L(@"Double-click a cell with JSON to see it here."), 12, NSFontWeightRegular, NSColor.secondaryLabelColor),
     ]);
-    _pages = [[TBSwitcher alloc] initWithViews:@[outlineScroll, textScroll, placeholder]];
+    _pages = [[TBSwitcher alloc] initWithViews:@[outlineScroll, TBColumn(@[TBSeparator(), textScroll], textScroll), placeholder]];
 
     _status = TBLabel(@"", 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
     _format = TBButton(L(@"Format"), self, @selector(format:));

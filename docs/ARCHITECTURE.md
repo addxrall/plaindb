@@ -17,11 +17,11 @@
 | `src/SSHTunnel.m` | `ssh -N -L` via `NSTask`, waiting for the port, reconnecting |
 | `src/Connector.m` | `TBConnect`: tunnel (if any) plus database connection in the background, used by the Connections window and the toolbar switcher |
 | `src/ConnectionStore.m` | plist in `~/Library/Application Support/PlainDB/connections.plist` and the Keychain (service `PlainDB`); falls back to data saved under the old name `Tabula` |
-| `src/UI.h/.m` | design tokens (`Theme`, light and dark), small view helpers, `TBRowView`, `TBCellView` |
-| `src/GridView.m` | grid for a `DBResult` (row numbers, numeric alignment, change colours); collects unsaved changes in the Data tab. Cells are `GridCellView`s that draw themselves (see DECISIONS.md, "Grid cells draw themselves") |
+| `src/UI.h/.m` | design tokens (`Theme`, light and dark), small view helpers, `TBRowView`, `TBCellView`, `TBToolButton` (the design's 26 × 22 pt icon button), `TBFlippedView` |
+| `src/GridView.m` | grid for a `DBResult` (row numbers, numeric alignment, change colours); collects unsaved changes in the Data tab. Cells are `GridCellView`s that draw themselves (see DECISIONS.md, "Grid cells draw themselves"), including the boolean checkbox and the ↗ / 🖼 badge; a click is matched against where the cell last drew its badge |
 | `src/SQLText.m` | SQL text view: highlighting, line number ruler |
 | `src/ReferencePopover.m` | foreign key popovers: referenced row preview and the row picker |
-| `src/DatePicker.m` | column kinds (bool, date, time, timestamp, timestamptz), Postgres date text ↔ `NSDate`, the date picker popover |
+| `src/DatePicker.m` | column kinds (bool, date, time, timestamp, timestamptz), Postgres date text ↔ `NSDate`, the date picker popover with its own month view (`CalendarView`) |
 | `src/ImageValue.m` | image detection and decoding for cell values, and the image preview popover |
 | `src/JSONInspector.m` | JSON side panel (an `NSSplitViewController` inspector item): tree and text modes; order-keeping JSON parser, pretty-printer and minifier |
 | `src/ConnectWindowController.m` | start window: Local tab (grid of databases on the local server) and Saved tab (list, form, production frame colour) |

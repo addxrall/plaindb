@@ -61,6 +61,32 @@ void ImageValueLoad(NSString *value, void (^done)(NSData *data, NSError *error))
     });
 }
 
+// Backdrop for the picture: diagonal stripes in a rounded frame, so transparent areas read as such.
+@interface StripedView : NSView
+@end
+
+@implementation StripedView
+- (void)drawRect:(NSRect)rect {
+    NSBezierPath *frame = [NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:4 yRadius:4];
+    [NSGraphicsContext saveGraphicsState];
+    [frame addClip];
+    [Theme.fill setFill];
+    CGFloat w = NSWidth(self.bounds), h = NSHeight(self.bounds);
+    for (CGFloat x = -h; x < w; x += 16 * M_SQRT2) { // 8 pt bands at 135°
+        NSBezierPath *band = [NSBezierPath bezierPath];
+        [band moveToPoint:NSMakePoint(x, 0)];
+        [band lineToPoint:NSMakePoint(x + 8 * M_SQRT2, 0)];
+        [band lineToPoint:NSMakePoint(x + 8 * M_SQRT2 + h, h)];
+        [band lineToPoint:NSMakePoint(x + h, h)];
+        [band fill];
+    }
+    [NSGraphicsContext restoreGraphicsState];
+    NSBezierPath *border = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 0.5, 0.5) xRadius:3.5 yRadius:3.5];
+    [NSColor.separatorColor setStroke];
+    [border stroke];
+}
+@end
+
 @implementation ImagePreview {
     NSString *_title, *_value;
     NSImageView *_imageView;
@@ -89,13 +115,15 @@ void ImageValueLoad(NSString *value, void (^done)(NSData *data, NSError *error))
     _imageView.imageScaling = NSImageScaleProportionallyDown;
     _spinner = TBSpinner(NSControlSizeRegular);
     NSView *stage = [NSView new];
-    TBPin(_imageView, stage, NSEdgeInsetsMake(10, 14, 10, 14));
+    StripedView *backdrop = [StripedView new];
+    TBPin(backdrop, stage, NSEdgeInsetsMake(10, 14, 10, 14));
+    TBPin(_imageView, backdrop, NSEdgeInsetsMake(1, 1, 1, 1));
     _spinner.translatesAutoresizingMaskIntoConstraints = NO;
     [stage addSubview:_spinner];
     [NSLayoutConstraint activateConstraints:@[[_spinner.centerXAnchor constraintEqualToAnchor:stage.centerXAnchor],
                                               [_spinner.centerYAnchor constraintEqualToAnchor:stage.centerYAnchor]]];
-    _width = [stage.widthAnchor constraintEqualToConstant:320];
-    _height = [stage.heightAnchor constraintEqualToConstant:200];
+    _width = [stage.widthAnchor constraintEqualToConstant:388];   // design: 388 × 384 pt popover
+    _height = [stage.heightAnchor constraintEqualToConstant:291];
     _width.active = _height.active = YES;
 
     _copy = TBButton(L(@"Copy Image"), self, @selector(copyImage:));
@@ -121,10 +149,10 @@ void ImageValueLoad(NSString *value, void (^done)(NSData *data, NSError *error))
     NSSize pixels = rep.pixelsWide > 0 ? NSMakeSize(rep.pixelsWide, rep.pixelsHigh) : image.size;
     NSString *bytes = [NSByteCountFormatter stringFromByteCount:data.length countStyle:NSByteCountFormatterCountStyleFile];
     _info.stringValue = [NSString stringWithFormat:@"%.0f × %.0f px · %@", pixels.width, pixels.height, bytes];
-    // fit into 520 × 400, never upscaled
+    // fit into 520 × 400, never upscaled; the frame is at least the design's 360 × 271
     CGFloat scale = MIN(1, MIN(520 / MAX(image.size.width, 1), 400 / MAX(image.size.height, 1)));
-    _width.constant = MAX(image.size.width * scale, 200) + 28;
-    _height.constant = MAX(image.size.height * scale, 80) + 20;
+    _width.constant = MAX(image.size.width * scale + 2, 360) + 28;
+    _height.constant = MAX(image.size.height * scale + 2, 271) + 20;
     _copy.enabled = YES;
 }
 

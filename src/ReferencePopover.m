@@ -32,15 +32,18 @@ static NSString *Shown(id value) {
     NSArray *row = _result.rows.firstObject;
     if (!row) {
         body = TBCenteredState(@[TBLabel(L(@"The referenced row doesn't exist."), 12, NSFontWeightRegular, NSColor.secondaryLabelColor)]);
-        [body.heightAnchor constraintEqualToConstant:80].active = YES;
     } else {
+        // Design: names right-aligned in their own (content-wide) column, values take the rest.
         NSMutableArray *lines = [NSMutableArray new];
         [_result.columns enumerateObjectsUsingBlock:^(NSString *column, NSUInteger i, BOOL *stop) {
             NSTextField *name = TBLabel(column, 12, NSFontWeightRegular, NSColor.secondaryLabelColor);
+            [name setContentHuggingPriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
+            [name setContentCompressionResistancePriority:NSLayoutPriorityDefaultHigh forOrientation:NSLayoutConstraintOrientationHorizontal];
             NSTextField *value = TBLabel(Shown(row[i]), 12, NSFontWeightRegular, row[i] == NSNull.null ? NSColor.tertiaryLabelColor : NSColor.labelColor);
             value.font = [Theme mono:12];
             value.selectable = YES;
             value.toolTip = [row[i] isKindOfClass:NSString.class] ? row[i] : nil;
+            [value setContentHuggingPriority:1 forOrientation:NSLayoutConstraintOrientationHorizontal];
             [lines addObject:@[name, value]];
         }];
         NSGridView *grid = [NSGridView gridViewWithViews:lines];
@@ -52,7 +55,7 @@ static NSString *Shown(id value) {
         scroll.drawsBackground = NO;
         scroll.hasVerticalScroller = YES;
         scroll.autohidesScrollers = YES;
-        NSView *document = [NSView new];
+        NSView *document = [TBFlippedView new];
         TBPin(grid, document, NSEdgeInsetsMake(10, 14, 10, 14));
         document.translatesAutoresizingMaskIntoConstraints = NO;
         scroll.documentView = document;
@@ -60,7 +63,6 @@ static NSString *Shown(id value) {
             [document.topAnchor constraintEqualToAnchor:scroll.contentView.topAnchor],
             [document.leadingAnchor constraintEqualToAnchor:scroll.contentView.leadingAnchor],
             [document.widthAnchor constraintEqualToAnchor:scroll.contentView.widthAnchor],
-            [scroll.heightAnchor constraintEqualToConstant:MIN(_result.columns.count * 22 + 20, 380)],
         ]];
         body = scroll;
     }
@@ -70,6 +72,7 @@ static NSString *Shown(id value) {
     header.spacing = 1;
     NSStackView *view = TBColumn(@[header, TBSeparator(), body, TBSeparator(), TBBar(@[], @[open], 40)], body);
     [view.widthAnchor constraintEqualToConstant:400].active = YES;
+    [view.heightAnchor constraintEqualToConstant:276].active = YES;
     self.view = view;
 }
 
@@ -81,27 +84,46 @@ static NSString *Shown(id value) {
 
 #pragma mark - Picker
 
+// The chosen row stays accent blue with white text while typing in the search field (a plain table
+// would grey its selection out, as it isn't the first responder).
+@interface AccentRowView : NSTableRowView
+@end
+
+@implementation AccentRowView
+- (void)drawSelectionInRect:(NSRect)dirtyRect {
+    [NSColor.controlAccentColor setFill];
+    NSRectFill(self.bounds);
+}
+@end
+
 @interface ReferencePicker () <NSSearchFieldDelegate, NSTableViewDataSource, NSTableViewDelegate>
 @end
 
 @implementation ReferencePicker {
-    NSString *_title, *_keyColumn;
+    NSString *_column, *_table, *_keyColumn;
     DBResult *_result;
     NSSearchField *_search;
     NSTableView *_list;
     NSTextField *_status;
 }
 
-- (instancetype)initWithTitle:(NSString *)title keyColumn:(NSString *)keyColumn {
+- (instancetype)initWithColumn:(NSString *)column table:(NSString *)table keyColumn:(NSString *)keyColumn {
     if ((self = [super initWithNibName:nil bundle:nil])) {
-        _title = title;
+        _column = column;
+        _table = table;
         _keyColumn = keyColumn;
     }
     return self;
 }
 
 - (void)loadView {
-    NSTextField *title = TBLabel(_title, 13, NSFontWeightSemibold, NSColor.labelColor);
+    NSFont *bold = [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], *plain = [NSFont systemFontOfSize:13];
+    NSMutableAttributedString *heading = [[NSMutableAttributedString alloc] initWithString:_column attributes:@{NSFontAttributeName: bold}];
+    [heading appendAttributedString:[[NSAttributedString alloc] initWithString:@" → " attributes:@{
+        NSFontAttributeName: plain, NSForegroundColorAttributeName: NSColor.tertiaryLabelColor}]];
+    [heading appendAttributedString:[[NSAttributedString alloc] initWithString:_table attributes:@{NSFontAttributeName: bold}]];
+    NSTextField *title = TBLabel(@"", 13, NSFontWeightSemibold, NSColor.labelColor);
+    title.attributedStringValue = heading;
     _search = [NSSearchField new];
     _search.placeholderString = L(@"Search in any column");
     _search.target = self;
@@ -123,18 +145,28 @@ static NSString *Shown(id value) {
     scroll.documentView = _list;
     scroll.hasVerticalScroller = YES;
     scroll.autohidesScrollers = YES;
-    [scroll.heightAnchor constraintEqualToConstant:260].active = YES;
+    scroll.drawsBackground = NO;
 
     _status = TBLabel(@"", 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
     NSButton *null = TBButton(L(@"Set NULL"), self, @selector(pickNull:));
     NSButton *choose = TBButton(L(@"Choose"), self, @selector(pick:));
-    choose.bezelColor = NSColor.controlAccentColor;
+    choose.keyEquivalent = @"\r"; // the accent button; Enter in the search field also picks (see below)
 
     NSStackView *top = TBColumnInset(@[title, _search], nil, NSEdgeInsetsMake(12, 14, 10, 14));
     top.spacing = 8;
     NSStackView *view = TBColumn(@[top, TBSeparator(), scroll, TBSeparator(), TBBar(@[_status], @[null, choose], 40)], scroll);
     [view.widthAnchor constraintEqualToConstant:440].active = YES;
+    [view.heightAnchor constraintEqualToConstant:330].active = YES;
     self.view = view;
+}
+
+- (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row {
+    return [AccentRowView new];
+}
+
+// White text on the selected row: its colours depend on the selection, so changed rows are rebuilt.
+- (void)tableViewSelectionDidChange:(NSNotification *)notification {
+    [_list reloadDataForRowIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, _list.numberOfRows)] columnIndexes:[NSIndexSet indexSetWithIndex:0]];
 }
 
 - (void)viewDidAppear {
@@ -222,8 +254,12 @@ static NSString *Shown(id value) {
         [others addObject:s.length > 40 ? [[s substringToIndex:40] stringByAppendingString:@"…"] : s];
         if (others.count == 4) *stop = YES;
     }];
+    BOOL selected = [tableView isRowSelected:row];
     cell.textField.stringValue = keyIndex == NSNotFound ? @"" : Shown(values[keyIndex]);
-    ((NSTextField *)[cell viewWithTag:1]).stringValue = [others componentsJoinedByString:@" · "];
+    cell.textField.textColor = selected ? NSColor.whiteColor : NSColor.labelColor;
+    NSTextField *rest = [cell viewWithTag:1];
+    rest.stringValue = [others componentsJoinedByString:@" · "];
+    rest.textColor = selected ? [NSColor colorWithWhite:1 alpha:0.85] : NSColor.secondaryLabelColor;
     return cell;
 }
 

@@ -30,6 +30,7 @@ static NSArray<NSArray *> *Languages(void) {
     [_language selectItemAtIndex:index == NSNotFound ? 0 : index];
     _language.target = self;
     _language.action = @selector(languageChanged:);
+    [_language.widthAnchor constraintGreaterThanOrEqualToConstant:170].active = YES;
 
     _note = TBLabel(L(@"Restart PlainDB to apply the new language."), 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
     _restart = TBButton(L(@"Restart Now"), self, @selector(restart:));
@@ -49,7 +50,7 @@ static NSArray<NSArray *> *Languages(void) {
     grid.translatesAutoresizingMaskIntoConstraints = NO;
     [root addSubview:grid];
     [NSLayoutConstraint activateConstraints:@[
-        [grid.topAnchor constraintEqualToAnchor:root.topAnchor constant:24],
+        [grid.topAnchor constraintEqualToAnchor:root.topAnchor constant:20],
         [grid.centerXAnchor constraintEqualToAnchor:root.centerXAnchor],
         [root.widthAnchor constraintEqualToConstant:420],
         [root.heightAnchor constraintEqualToConstant:150],
