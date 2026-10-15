@@ -24,6 +24,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy) NSDictionary<NSNumber *, NSColor *> *columnColors;
 // Search term marked in every cell where it occurs (ignoring case), or nil.
 @property (nonatomic, copy, nullable) NSString *highlight;
+// Whole cells marked like a search match: column index → values. For foreign keys whose referenced row matched.
+@property (nonatomic, copy, nullable) NSDictionary<NSNumber *, NSSet<NSString *> *> *highlightedValues;
 
 @property (nonatomic) BOOL editable;
 // Columns with a default value: new rows show "DEFAULT" there instead of "NULL".

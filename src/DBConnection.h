@@ -32,6 +32,10 @@ NS_ASSUME_NONNULL_BEGIN
 // LIKE pattern finding `term` anywhere, with %, _ and \ in it matched literally.
 NSString *DBLikePattern(NSString *term);
 
+// ⌘F condition on $1: any of `columns` matches, or a foreign key points to a row in which any column matches
+// (one level deep). references: column → @[referenced schema, table, column, @[that table's columns]].
+NSString *DBSearchCondition(id<DBConnection> conn, NSArray<NSString *> *columns, NSDictionary<NSString *, NSArray *> *references);
+
 // UI strings: the English text is the key, translations live in Resources/<lang>.lproj.
 #define L(key) NSLocalizedString(key, nil)
 

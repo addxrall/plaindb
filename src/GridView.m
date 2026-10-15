@@ -348,6 +348,16 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
 
 - (void)setHighlight:(NSString *)highlight {
     _highlight = [highlight copy];
+    [self redrawAllCells];
+}
+
+- (void)setHighlightedValues:(NSDictionary<NSNumber *, NSSet<NSString *> *> *)values {
+    if (values == _highlightedValues || [values isEqual:_highlightedValues]) return;
+    _highlightedValues = [values copy];
+    [self redrawAllCells];
+}
+
+- (void)redrawAllCells {
     [_table reloadDataForRowIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, _table.numberOfRows)]
                       columnIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, _table.numberOfColumns)]];
 }
@@ -733,7 +743,9 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
     } mutableCopy];
     if (deleted) attrs[NSStrikethroughStyleAttributeName] = @(NSUnderlineStyleSingle);
     NSMutableAttributedString *shown = [[NSMutableAttributedString alloc] initWithString:text attributes:attrs];
-    if (_highlight.length && !placeholder) { // same matching as the search: anywhere, ignoring case
+    if (!placeholder && [_highlightedValues[@(col)] containsObject:value]) // matched through the row this key points to
+        [shown addAttribute:NSBackgroundColorAttributeName value:Theme.findHighlight range:NSMakeRange(0, text.length)];
+    else if (_highlight.length && !placeholder) { // same matching as the search: anywhere, ignoring case
         NSRange search = NSMakeRange(0, text.length), found;
         while ((found = [text rangeOfString:_highlight options:NSCaseInsensitiveSearch range:search]).location != NSNotFound) {
             [shown addAttribute:NSBackgroundColorAttributeName value:Theme.findHighlight range:found];

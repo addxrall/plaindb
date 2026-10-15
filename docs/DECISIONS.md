@@ -78,6 +78,7 @@
 - One query per Enter, not per keystroke.
 - Each search runs with `statement_timeout = 15 s`, since it scans every column of the whole table. On a big production table it stops with a hint instead of blocking the connection.
 - The condition comes from the connection (`searchConditionForColumns:`), so SQLite can supply its own syntax later.
+- Foreign keys are searched too, one level deep: `driver_id IN (SELECT id FROM drivers WHERE <any column matches>)` for every single-column key (`DBSearchCondition`, tested in `pg_test`). A claim is found by its driver's name. Such rows don't contain the term themselves, so a second small query (only the key values on the page) marks the key cells whose referenced row matched. Always on: a switch would only matter for a huge referenced table, and the 15 s limit already covers that.
 
 ## 2026-10-15 · Switching database or connection from the window
 

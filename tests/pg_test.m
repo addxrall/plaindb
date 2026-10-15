@@ -106,6 +106,25 @@ int main(void) {
         assert([ids(@"123") isEqual:@[@"3"]]);          // numbers match as text
         assert([ids(@"9.9") isEqual:@[@"1"]]);
 
+        // search through foreign keys: a car is found by its driver's name
+        assert([pg execute:@"INSERT INTO drivers (name) VALUES ('Anna Kowalska'), ('Jan Nowak');"
+                            "INSERT INTO cars (plate, driver_id) VALUES ('WA 1', 1), ('KR 2', 2), ('PO 3', NULL)"
+                    params:nil error:&err]);
+        NSString *linked = DBSearchCondition(pg, @[@"id", @"plate", @"driver_id", @"a", @"b"],
+                                             @{@"driver_id": @[schema, @"drivers", @"id", @[@"id", @"name"]]});
+        NSArray *(^cars)(NSString *) = ^NSArray *(NSString *term) {
+            NSString *q = [NSString stringWithFormat:@"SELECT plate FROM cars WHERE %@ ORDER BY id", linked];
+            NSMutableArray *found = [NSMutableArray new];
+            DBResult *res = [pg execute:q params:@[DBLikePattern(term)] error:NULL];
+            assert(res);
+            for (NSArray *row in res.rows) [found addObject:row[0]];
+            return found;
+        };
+        assert([cars(@"kowal") isEqual:@[@"WA 1"]]);         // only in the referenced row
+        assert([cars(@"KR") isEqual:@[@"KR 2"]]);            // own columns still count
+        assert([cars(@"a") isEqual:(@[@"WA 1", @"KR 2"])]);  // both drivers' names; the car without a driver isn't matched
+        assert([DBSearchCondition(pg, @[@"id"], @{}) isEqual:[pg searchConditionForColumns:@[@"id"]]]);
+
         // production mode: the server rejects writes until BEGIN READ WRITE
         PGConnection *ro = [[PGConnection alloc] initWithParams:Params() readOnly:YES];
         assert([ro open:&err]);

@@ -29,7 +29,7 @@ PlainDB is written in Objective-C and AppKit, with no Electron and no web views.
 - **Foreign keys**: a ↗ next to the value opens the referenced row in a popover. Editing the value opens a search in the referenced table: type a name, pick the row, and its key goes into the cell.
 - **Images** stored as `bytea`, base64, `data:` URIs or image URLs get a 🖼; click it to see the picture, its size and dimensions.
 - **Typed editing**: booleans show a checkbox that toggles with a click. `date`, `timestamp` and `timestamptz` open a calendar with a precise date and time field (`time` gets just the field); `timestamptz` is shown in your time zone and written with its offset.
-- **Find (⌘F or the magnifier)**: search every column of the whole table (not just the loaded page), ignoring case; matches are highlighted and counted. In the SQL editor ⌘F searches the query text.
+- **Find (⌘F or the magnifier)**: search every column of the whole table (not just the loaded page), ignoring case; matches are highlighted and counted. Foreign keys are followed one level: in `claims`, typing a driver's surname finds their claims, and the matching `driver_id` cells are highlighted. In the SQL editor ⌘F searches the query text.
 - **Data**: 200 rows per page with the table's total, row numbers, click a header to sort, numbers right-aligned.
 - **Editing** (tables with a primary key):
   - double-click or Enter edits a cell, Esc cancels;

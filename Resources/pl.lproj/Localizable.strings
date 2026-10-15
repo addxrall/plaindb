@@ -125,6 +125,9 @@
 "All columns of the whole table, ignoring case · Enter" = "Wszystkie kolumny całej tabeli, bez rozróżniania wielkości liter · Enter";
 "All columns, whole table · “%@”" = "Wszystkie kolumny, cała tabela · „%@”";
 "The table is empty" = "Tabela jest pusta";
+"All columns and linked tables (%@), ignoring case · Enter" = "Wszystkie kolumny i powiązane tabele (%@), bez rozróżniania wielkości liter · Enter";
+"All columns and linked tables · “%@”" = "Wszystkie kolumny i powiązane tabele · „%@”";
+"Also finds rows whose foreign key points to a matching row in: %@" = "Znajduje też wiersze, których klucz obcy wskazuje na pasujący wiersz w: %@";
 "Done" = "Gotowe";
 "The search took too long" = "Wyszukiwanie trwało za długo";
 "It was stopped after 15 s. Try a more specific term." = "Przerwano je po 15 s. Spróbuj bardziej konkretnej frazy.";

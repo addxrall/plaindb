@@ -69,6 +69,16 @@ NSString *DBLikePattern(NSString *term) {
     return [NSString stringWithFormat:@"%%%@%%", escaped];
 }
 
+NSString *DBSearchCondition(id<DBConnection> conn, NSArray<NSString *> *columns, NSDictionary<NSString *, NSArray *> *references) {
+    NSMutableArray *parts = [NSMutableArray arrayWithObject:[conn searchConditionForColumns:columns]];
+    for (NSString *column in [references.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        NSArray *ref = references[column];
+        [parts addObject:[NSString stringWithFormat:@"%@ IN (SELECT %@ FROM %@.%@ WHERE %@)", DBQuoteIdent(column), DBQuoteIdent(ref[2]),
+                                                    DBQuoteIdent(ref[0]), DBQuoteIdent(ref[1]), [conn searchConditionForColumns:ref[3]]]];
+    }
+    return parts.count == 1 ? parts[0] : [NSString stringWithFormat:@"(%@)", [parts componentsJoinedByString:@" OR "]];
+}
+
 NSString *DBInlineParams(NSString *sql, NSArray *params) {
     NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"\\$(\\d+)" options:0 error:nil];
     NSMutableString *out = [NSMutableString new];

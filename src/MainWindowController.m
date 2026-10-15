@@ -45,6 +45,13 @@ static NSView *Dot(NSColor *color, CGFloat size) {
     return dot;
 }
 
+// (valueForKey:@"firstObject" would descend into the inner arrays instead)
+static NSArray *FirstColumn(DBResult *r) {
+    NSMutableArray *values = [NSMutableArray new];
+    for (NSArray *row in r.rows) [values addObject:row.firstObject];
+    return values;
+}
+
 // 8 pt dot with a thin light ring, for menus.
 static NSImage *ColorDot(NSColor *color) {
     return [NSImage imageWithSize:NSMakeSize(10, 10) flipped:NO drawingHandler:^BOOL(NSRect rect) {
@@ -87,6 +94,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     NSArray<NSString *> *_databases;     // other databases on this server, for the switcher
     NSMenu *_switchMenu;
     NSDictionary<NSString *, NSArray *> *_foreignKeys; // column → [referenced schema, table, column]
+    NSDictionary<NSString *, NSArray *> *_searchReferences; // the same plus the referenced table's columns, for ⌘F
     NSDictionary<NSString *, NSString *> *_columnKinds; // column → TBValueKind (bool, date, time…)
     NSDictionary<NSString *, NSString *> *_columnTypes; // column → type as Postgres names it, e.g. jsonb
     id _estimate;                        // planner's row estimate for the open table (NSString or NSNull)
@@ -516,8 +524,19 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 }
 
 - (void)updateSearchHint {
-    _searchHint.stringValue = _searchTerm ? [NSString stringWithFormat:L(@"All columns, whole table · “%@”"), _searchTerm]
-                                          : L(@"All columns of the whole table, ignoring case · Enter");
+    NSMutableOrderedSet *linked = [NSMutableOrderedSet new];
+    for (NSString *column in [_searchReferences.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+        NSArray *ref = _searchReferences[column];
+        [linked addObject:[ref[0] isEqual:_schema] || [ref[0] isEqual:@"public"] ? ref[1] : [NSString stringWithFormat:@"%@.%@", ref[0], ref[1]]];
+    }
+    NSString *tables = [linked.array componentsJoinedByString:@", "];
+    if (_searchTerm)
+        _searchHint.stringValue = linked.count ? [NSString stringWithFormat:L(@"All columns and linked tables · “%@”"), _searchTerm]
+                                               : [NSString stringWithFormat:L(@"All columns, whole table · “%@”"), _searchTerm];
+    else
+        _searchHint.stringValue = linked.count ? [NSString stringWithFormat:L(@"All columns and linked tables (%@), ignoring case · Enter"), tables]
+                                               : L(@"All columns of the whole table, ignoring case · Enter");
+    _searchHint.toolTip = linked.count ? [NSString stringWithFormat:L(@"Also finds rows whose foreign key points to a matching row in: %@"), tables] : nil;
     if (!_searchTerm) _searchStatus.stringValue = @"";
 }
 
@@ -1115,7 +1134,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     if (!_table) return;
     NSMutableString *sql = [NSMutableString stringWithFormat:@"SELECT * FROM %@.%@", DBQuoteIdent(_schema), DBQuoteIdent(_table)];
     NSString *term = _columnNames.count ? _searchTerm : nil;
-    if (term) [sql appendFormat:@" WHERE %@", [_conn searchConditionForColumns:_columnNames]];
+    NSString *where = term ? [self searchCondition] : nil;
+    if (where) [sql appendFormat:@" WHERE %@", where];
     if (_sortColumn) [sql appendFormat:@" ORDER BY %@ %@", DBQuoteIdent(_sortColumn), _sortAscending ? @"ASC" : @"DESC"];
     [sql appendFormat:@" LIMIT %ld OFFSET %ld", (long)PageSize, (long)_offset];
     NSArray *params = term ? @[DBLikePattern(term)] : nil;
@@ -1141,6 +1161,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
         self->_dataGrid.rowNumberOffset = offset;
         self->_dataGrid.result = r;
         self->_dataGrid.highlight = term;
+        self->_dataGrid.highlightedValues = nil; // key cells matched through their referenced row: highlightReferencesForTerm
         self->_emptyLabel.stringValue = r.rows.count ? @"" : term ? L(@"Nothing found") : L(@"The table is empty");
         // the exact count follows from loadTotalWhere
         self->_searchStatus.stringValue = !term ? @"" : r.rows.count < PageSize ? LN(@"%lu rows", offset + r.rows.count) : @"";
@@ -1152,8 +1173,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
                                                     : L(@"no rows");
         self->_prevButton.enabled = offset > 0;
         self->_nextButton.enabled = r.rows.count == PageSize;
-        if (r.rows.count) [self loadTotalWhere:term ? [conn searchConditionForColumns:self->_columnNames] : nil params:params
-                                        offset:offset shown:r.rows.count];
+        if (r.rows.count) [self loadTotalWhere:where params:params offset:offset shown:r.rows.count];
+        if (term) [self highlightReferencesForTerm:term result:r];
         self->_dataStatus = [NSString stringWithFormat:@"%@ · %.0f ms", LN(@"%lu rows", r.rows.count), ms];
         [self updateStatus];
     } failed:^(NSError *error, double ms) {
@@ -1229,6 +1250,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
         NSMutableDictionary *keys = [NSMutableDictionary new];
         for (NSArray *fk in r.rows) keys[fk[0]] = @[fk[1], fk[2], fk[3]];
         self->_foreignKeys = keys;
+        [self loadSearchReferencesFor:keys schema:schema table:table];
     } failed:^(NSError *error, double ms) {}]; // without foreign keys the grid just has no ↗
     [self run:^DBResult *(NSError **e) { return [conn indexesInSchema:schema table:table error:e]; } done:^(DBResult *r, double ms) {
         DBResult *shown = [DBResult new];
@@ -1240,6 +1262,52 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
         self->_structureStatus = self->_structureMeta.stringValue;
         [self updateStatus];
     } failed:nil];
+}
+
+// ⌘F also searches the tables the foreign keys point to, so it needs their columns.
+- (void)loadSearchReferencesFor:(NSDictionary<NSString *, NSArray *> *)keys schema:(NSString *)schema table:(NSString *)table {
+    id<DBConnection> conn = _conn;
+    [keys enumerateKeysAndObjectsUsingBlock:^(NSString *column, NSArray *fk, BOOL *stop) {
+        [self run:^DBResult *(NSError **e) { return [conn columnsInSchema:fk[0] table:fk[1] error:e]; } done:^(DBResult *r, double ms) {
+            if (![self->_schema isEqual:schema] || ![self->_table isEqual:table] || !r.rows.count) return;
+            NSMutableDictionary *refs = [self->_searchReferences mutableCopy] ?: [NSMutableDictionary new];
+            refs[column] = @[fk[0], fk[1], fk[2], FirstColumn(r)];
+            self->_searchReferences = refs;
+            [self updateSearchHint];
+        } failed:^(NSError *error, double ms) {}]; // that table just isn't searched
+    }];
+}
+
+- (NSString *)searchCondition {
+    return DBSearchCondition(_conn, _columnNames, _searchReferences ?: @{});
+}
+
+// Rows found through a foreign key don't contain the term themselves: mark the key cells whose referenced
+// row matched. One small query per key column, only for the values on this page.
+- (void)highlightReferencesForTerm:(NSString *)term result:(DBResult *)result {
+    _dataGrid.highlightedValues = nil;
+    id<DBConnection> conn = _conn;
+    DBResult *shown = result;
+    [_searchReferences enumerateKeysAndObjectsUsingBlock:^(NSString *column, NSArray *ref, BOOL *stop) {
+        NSUInteger index = [result.columns indexOfObject:column];
+        if (index == NSNotFound) return;
+        NSMutableOrderedSet *values = [NSMutableOrderedSet new];
+        for (NSArray *row in result.rows)
+            if ([row[index] isKindOfClass:NSString.class]) [values addObject:row[index]];
+        if (!values.count) return;
+        NSMutableArray *placeholders = [NSMutableArray new];
+        for (NSUInteger i = 0; i < values.count; i++) [placeholders addObject:[NSString stringWithFormat:@"$%lu", (unsigned long)i + 2]];
+        NSString *sql = [NSString stringWithFormat:@"SELECT %@ FROM %@.%@ WHERE %@ IN (%@) AND %@", DBQuoteIdent(ref[2]), DBQuoteIdent(ref[0]),
+                                                   DBQuoteIdent(ref[1]), DBQuoteIdent(ref[2]), [placeholders componentsJoinedByString:@", "],
+                                                   [conn searchConditionForColumns:ref[3]]];
+        NSArray *params = [@[DBLikePattern(term)] arrayByAddingObjectsFromArray:values.array];
+        [self run:^DBResult *(NSError **e) { return [conn execute:sql params:params error:e]; } done:^(DBResult *r, double ms) {
+            if (self->_dataGrid.result != shown) return; // another page or search by now
+            NSMutableDictionary *marked = [self->_dataGrid.highlightedValues mutableCopy] ?: [NSMutableDictionary new];
+            marked[@(index)] = [NSSet setWithArray:FirstColumn(r)];
+            self->_dataGrid.highlightedValues = marked;
+        } failed:^(NSError *error, double ms) {}];
+    }];
 }
 
 - (void)sortBy:(NSString *)column ascending:(BOOL)ascending {
@@ -1535,7 +1603,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     _table = t[1];
     _isView = [t[2] isEqual:@"view"];
     _estimate = t[3];
-    _foreignKeys = nil; // until this table's are loaded
+    _foreignKeys = _searchReferences = nil; // until this table's are loaded
     _columnKinds = _columnTypes = nil;
     _pkColumns = _columnNames = nil; // read-only until the structure is loaded
     _searchTerm = nil;                 // a search belongs to one table
