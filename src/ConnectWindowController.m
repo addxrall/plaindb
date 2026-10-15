@@ -5,7 +5,7 @@
 #import "SSHTunnel.h"
 #import "UI.h"
 
-static NSString *const ModeKey = @"connectMode"; // 0 = Local, 1 = Saved
+static NSString *const ModeKey = @"connectMode"; // 0 = Local, 1 = Saved, 2 = Files
 static const NSInteger TileColumns = 5;
 static const CGFloat TitleBand = 38; // height of the transparent title bar area
 
@@ -75,6 +75,35 @@ static NSString *HexFromColor(NSColor *color) {
 }
 @end
 
+// Accepts files dragged onto the window.
+@interface FileDropView : NSView
+@property (nonatomic, copy) void (^onDrop)(NSArray<NSString *> *paths);
+@end
+
+@implementation FileDropView
+- (instancetype)initWithFrame:(NSRect)frame {
+    if ((self = [super initWithFrame:frame])) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
+    return self;
+}
+
+- (NSArray<NSString *> *)pathsIn:(id<NSDraggingInfo>)info {
+    NSArray<NSURL *> *urls = [info.draggingPasteboard readObjectsForClasses:@[NSURL.class] options:@{NSPasteboardURLReadingFileURLsOnlyKey: @YES}];
+    NSMutableArray *paths = [NSMutableArray new];
+    for (NSURL *url in urls) [paths addObject:url.path];
+    return paths;
+}
+
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)info {
+    return [self pathsIn:info].count ? NSDragOperationCopy : NSDragOperationNone;
+}
+
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)info {
+    NSArray *paths = [self pathsIn:info];
+    if (paths.count && self.onDrop) self.onDrop(paths);
+    return paths.count > 0;
+}
+@end
+
 // key, label, placeholder
 static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     return @[
@@ -105,6 +134,10 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     NSProgressIndicator *_spinner;
     NSImageView *_errorIcon;
     NSTextField *_statusLabel;
+    // recent SQLite files
+    NSTableView *_files;
+    NSArray<NSDictionary *> *_recent;
+    NSTextField *_filesEmpty;
     // local databases
     NSView *_tilesView;
     NSArray<NSString *> *_localNames;
@@ -140,17 +173,22 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
 #pragma mark - UI
 
 - (void)buildUI {
-    _tabs = [[TBSwitcher alloc] initWithViews:@[[self buildLocalView], [self buildSavedView]]];
-    NSInteger mode = MIN(MAX([NSUserDefaults.standardUserDefaults integerForKey:ModeKey], 0), 1);
+    _tabs = [[TBSwitcher alloc] initWithViews:@[[self buildLocalView], [self buildSavedView], [self buildFilesView]]];
+    NSInteger mode = MIN(MAX([NSUserDefaults.standardUserDefaults integerForKey:ModeKey], 0), 2);
     _tabs.selectedIndex = mode;
-    NSSegmentedControl *modeSwitch = [NSSegmentedControl segmentedControlWithLabels:@[L(@"Local"), L(@"Saved")]
+    NSSegmentedControl *modeSwitch = [NSSegmentedControl segmentedControlWithLabels:@[L(@"Local"), L(@"Saved"), L(@"Files")]
                                                                        trackingMode:NSSegmentSwitchTrackingSelectOne
                                                                              target:self
                                                                              action:@selector(switchMode:)];
     modeSwitch.selectedSegment = mode;
     modeSwitch.controlSize = NSControlSizeSmall;
 
-    NSView *root = [NSView new];
+    FileDropView *root = [FileDropView new]; // a database file dropped anywhere on the window opens it
+    __weak ConnectWindowController *weakSelf = self;
+    root.onDrop = ^(NSArray<NSString *> *paths) {
+        for (NSString *path in paths)
+            if (weakSelf.onOpenFile) weakSelf.onOpenFile(path);
+    };
     TBPin(_tabs, root, NSEdgeInsetsMake(0, 0, 0, 0));
     modeSwitch.translatesAutoresizingMaskIntoConstraints = NO;
     [root addSubview:modeSwitch];
@@ -337,15 +375,158 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     return view;
 }
 
+#pragma mark - Files
+
+// Recently opened SQLite files: click opens, right-click for colour, read-only and removal. Files can also be dropped here.
+- (NSView *)buildFilesView {
+    NSTextField *title = TBLabel(L(@"Recent files"), 13, NSFontWeightSemibold, NSColor.labelColor);
+    NSButton *open = TBButton(L(@"Open…"), self, @selector(openPanel:));
+    NSStackView *header = TBBar(@[title], @[open], 32);
+    header.edgeInsets = NSEdgeInsetsMake(0, 20, 0, 20);
+
+    _files = [NSTableView new];
+    _files.headerView = nil;
+    _files.style = NSTableViewStylePlain;
+    _files.rowHeight = 44;
+    _files.backgroundColor = NSColor.clearColor;
+    _files.columnAutoresizingStyle = NSTableViewFirstColumnOnlyAutoresizingStyle;
+    [_files addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"file"]];
+    _files.dataSource = self;
+    _files.delegate = self;
+    _files.target = self;
+    _files.action = @selector(openFileRow:);
+    _files.menu = [NSMenu new];
+    _files.menu.delegate = self;
+    NSScrollView *scroll = [NSScrollView new];
+    scroll.documentView = _files;
+    scroll.drawsBackground = NO;
+    scroll.hasVerticalScroller = YES;
+    scroll.autohidesScrollers = YES;
+
+    _filesEmpty = TBWrappingLabel(L(@"No recent files. Open a database with ⌘O or drop a file here."), 12, NSColor.secondaryLabelColor);
+    _filesEmpty.alignment = NSTextAlignmentCenter;
+    _filesEmpty.selectable = NO;
+    _filesEmpty.translatesAutoresizingMaskIntoConstraints = NO;
+    [scroll addSubview:_filesEmpty];
+    [NSLayoutConstraint activateConstraints:@[[_filesEmpty.centerXAnchor constraintEqualToAnchor:scroll.centerXAnchor],
+                                              [_filesEmpty.centerYAnchor constraintEqualToAnchor:scroll.centerYAnchor constant:-20],
+                                              [_filesEmpty.widthAnchor constraintLessThanOrEqualToConstant:360]]];
+
+    NSView *titleSpace = [NSView new];
+    [titleSpace.heightAnchor constraintEqualToConstant:TitleBand].active = YES;
+    NSStackView *view = TBColumn(@[titleSpace, header, scroll], scroll);
+    view.edgeInsets = NSEdgeInsetsMake(0, 0, 16, 0);
+    [view setCustomSpacing:6 afterView:header];
+    return view;
+}
+
+- (void)reloadFiles {
+    _recent = [ConnectionStore recentFiles];
+    _filesEmpty.hidden = _recent.count > 0;
+    [_files reloadData];
+}
+
+- (NSView *)fileCellFor:(NSDictionary *)file {
+    BOOL exists = [NSFileManager.defaultManager fileExistsAtPath:file[@"path"]];
+    NSImageView *icon = [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"cylinder.split.1x2" accessibilityDescription:nil]];
+    icon.symbolConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:18 weight:NSFontWeightRegular];
+    NSString *frame = [ConnectionStore frameColorFor:file];
+    icon.contentTintColor = !exists ? NSColor.tertiaryLabelColor : frame.length ? [Theme colorFromHex:frame fallback:NSColor.controlAccentColor] : NSColor.controlAccentColor;
+    NSTextField *name = TBLabel(file[@"name"], 13, NSFontWeightMedium, exists ? NSColor.labelColor : NSColor.tertiaryLabelColor);
+    NSString *where = [[file[@"path"] stringByDeletingLastPathComponent] stringByAbbreviatingWithTildeInPath];
+    NSNumber *size = [NSFileManager.defaultManager attributesOfItemAtPath:file[@"path"] error:NULL][NSFileSize];
+    NSString *detail = exists ? [NSString stringWithFormat:@"%@ · %@", where, [NSByteCountFormatter stringFromByteCount:size.longLongValue countStyle:NSByteCountFormatterCountStyleFile]]
+                              : [NSString stringWithFormat:@"%@ · %@", where, L(@"missing")];
+    NSTextField *sub = TBLabel(detail, 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
+    sub.lineBreakMode = NSLineBreakByTruncatingMiddle; // keep the file's own folder visible
+    // icon · name over folder and size (taking the free width) · read-only badge
+    NSView *row = [NSView new];
+    NSView *badge = [file[@"production"] boolValue] ? TBBadge(L(@"read-only"), NSColor.secondaryLabelColor, Theme.fill) : nil;
+    for (NSView *v in badge ? @[icon, name, sub, badge] : @[icon, name, sub]) {
+        v.translatesAutoresizingMaskIntoConstraints = NO;
+        [row addSubview:v];
+    }
+    NSLayoutXAxisAnchor *end = badge ? badge.leadingAnchor : row.trailingAnchor;
+    CGFloat gap = badge ? -10 : -20;
+    [NSLayoutConstraint activateConstraints:@[
+        [icon.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:20],
+        [icon.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
+        [icon.widthAnchor constraintEqualToConstant:22],
+        [name.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:10],
+        [name.trailingAnchor constraintLessThanOrEqualToAnchor:end constant:gap],
+        [name.bottomAnchor constraintEqualToAnchor:row.centerYAnchor constant:1],
+        [sub.leadingAnchor constraintEqualToAnchor:name.leadingAnchor],
+        [sub.trailingAnchor constraintLessThanOrEqualToAnchor:end constant:gap],
+        [sub.topAnchor constraintEqualToAnchor:name.bottomAnchor constant:1],
+    ]];
+    if (badge) [NSLayoutConstraint activateConstraints:@[[badge.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-20],
+                                                         [badge.centerYAnchor constraintEqualToAnchor:row.centerYAnchor]]];
+    row.toolTip = file[@"path"];
+    return row;
+}
+
+- (void)openFileRow:(NSTableView *)sender {
+    NSInteger row = sender.clickedRow;
+    if (row < 0 || row >= (NSInteger)_recent.count) return;
+    if (self.onOpenFile) self.onOpenFile(_recent[row][@"path"]);
+}
+
+- (void)openPanel:(id)sender {
+    if (self.onOpenPanel) self.onOpenPanel();
+}
+
+// Right-click on a file: frame colour, read-only, remove from the list.
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+    [menu removeAllItems];
+    NSInteger row = _files.clickedRow;
+    if (row < 0 || row >= (NSInteger)_recent.count) return;
+    NSDictionary *file = _recent[row];
+    [self addColorItemsTo:menu current:file[@"frame"] ?: @"" action:@selector(setFileColor:) key:file[@"path"]];
+    [menu addItem:NSMenuItem.separatorItem];
+    NSMenuItem *readOnly = [menu addItemWithTitle:L(@"Read-only") action:@selector(toggleFileReadOnly:) keyEquivalent:@""];
+    readOnly.target = self;
+    readOnly.representedObject = file[@"path"];
+    readOnly.state = [file[@"production"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+    [menu addItem:NSMenuItem.separatorItem];
+    NSMenuItem *forget = [menu addItemWithTitle:L(@"Remove from List") action:@selector(forgetFile:) keyEquivalent:@""];
+    forget.target = self;
+    forget.representedObject = file[@"path"];
+}
+
+- (void)updateFile:(NSString *)path with:(NSDictionary *)changes {
+    NSMutableDictionary *file = [[ConnectionStore fileConnectionForPath:path] mutableCopy];
+    [file addEntriesFromDictionary:changes];
+    [ConnectionStore rememberFile:file moveToTop:NO];
+    [self reloadFiles];
+}
+
+- (void)setFileColor:(NSMenuItem *)sender {
+    [self updateFile:sender.representedObject[0] with:@{@"frame": sender.representedObject[1]}];
+}
+
+- (void)toggleFileReadOnly:(NSMenuItem *)sender {
+    [self updateFile:sender.representedObject with:@{@"production": @(sender.state != NSControlStateValueOn)}];
+}
+
+- (void)forgetFile:(NSMenuItem *)sender {
+    [ConnectionStore forgetFile:sender.representedObject];
+    [self reloadFiles];
+}
+
 // Right-click on a local database: its window frame colour (the tile icon shows it too).
 - (NSMenu *)colorMenuForDatabase:(NSString *)database {
     NSMenu *menu = [NSMenu new];
+    [self addColorItemsTo:menu current:[ConnectionStore localFrameColorFor:database] action:@selector(setLocalColor:) key:database];
+    return menu;
+}
+
+// "Window frame" header and one item per colour; each item's representedObject is @[key, hex].
+- (void)addColorItemsTo:(NSMenu *)menu current:(NSString *)current action:(SEL)action key:(id)key {
     [menu addItem:[NSMenuItem sectionHeaderWithTitle:L(@"Window frame")]];
-    NSString *current = [ConnectionStore localFrameColorFor:database];
     for (NSArray *c in [@[@[@"", L(@"No color")]] arrayByAddingObjectsFromArray:FrameColors()]) {
-        NSMenuItem *item = [menu addItemWithTitle:c[1] action:@selector(setLocalColor:) keyEquivalent:@""];
+        NSMenuItem *item = [menu addItemWithTitle:c[1] action:action keyEquivalent:@""];
         item.target = self;
-        item.representedObject = @[database, c[0]];
+        item.representedObject = @[key, c[0]];
         item.state = [c[0] isEqual:current] ? NSControlStateValueOn : NSControlStateValueOff;
         NSColor *color = [c[0] length] ? [Theme colorFromHex:c[0] fallback:NSColor.clearColor] : nil;
         item.image = [NSImage imageWithSize:NSMakeSize(12, 12) flipped:NO drawingHandler:^BOOL(NSRect r) {
@@ -360,7 +541,6 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
             return YES;
         }];
     }
-    return menu;
 }
 
 - (void)setLocalColor:(NSMenuItem *)sender {
@@ -416,16 +596,18 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
 - (void)showWindow:(id)sender {
     [super showWindow:sender];
     if (_tabs.selectedIndex == 0) [self reloadLocal:nil];
+    if (_tabs.selectedIndex == 2) [self reloadFiles];
 }
 
 #pragma mark - List
 
 - (NSInteger)numberOfRowsInTableView:(NSTableView *)tableView {
-    return _connections.count;
+    return tableView == _files ? _recent.count : _connections.count;
 }
 
 - (NSTableRowView *)tableView:(NSTableView *)tableView rowViewForRow:(NSInteger)row {
     TBRowView *view = [TBRowView new];
+    if (tableView == _files) return view; // clicking opens; no lasting selection
     view.selectionColor = Theme.sideSelection;
     view.selectionInset = 8;
     view.selectionRadius = 6;
@@ -433,6 +615,7 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
 }
 
 - (NSView *)tableView:(NSTableView *)tableView viewForTableColumn:(NSTableColumn *)column row:(NSInteger)row {
+    if (tableView == _files) return [self fileCellFor:_recent[row]];
     NSDictionary *c = _connections[row];
     BOOL production = [c[@"production"] boolValue], ssh = [c[@"sshHost"] length] > 0;
     NSTableCellView *cell = [tableView makeViewWithIdentifier:@"connection" owner:nil];
@@ -473,7 +656,12 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     return cell;
 }
 
+- (BOOL)tableView:(NSTableView *)tableView shouldSelectRow:(NSInteger)row {
+    return tableView != _files;
+}
+
 - (void)tableViewSelectionDidChange:(NSNotification *)notification {
+    if (notification.object == _files) return;
     if (_selected >= 0 && _selected < (NSInteger)_connections.count) [self storeFormAt:_selected];
     _selected = _list.selectedRow;
     [self fillForm];
@@ -612,6 +800,7 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     [self centerModeSwitch];
     [NSUserDefaults.standardUserDefaults setInteger:sender.selectedSegment forKey:ModeKey];
     if (sender.selectedSegment == 0) [self reloadLocal:nil];
+    if (sender.selectedSegment == 2) [self reloadFiles];
 }
 
 // Databases on the default local server: socket in /tmp, port 5432, OS user (like Postgres.app).

@@ -13,6 +13,19 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, nullable) void (^onReplace)(MainWindowController *controller, id<DBConnection> connection,
                                                         SSHTunnel *_Nullable tunnel, NSDictionary *info);
 - (instancetype)initWithConnection:(id<DBConnection>)connection tunnel:(nullable SSHTunnel *)tunnel info:(NSDictionary *)info;
+// Tabs: windows of one connection share it. The owner closes the connection with its last window.
+@property (nonatomic, readonly) id<DBConnection> connection;
+@property (nonatomic, readonly, nullable) SSHTunnel *tunnel;
+@property (nonatomic, readonly) NSDictionary *info;
+// "Open in New Tab" (sidebar menu, ⌘-click): the owner makes a tab of the same connection showing that table.
+@property (nonatomic, copy, nullable) void (^onOpenInNewTab)(MainWindowController *controller, NSString *schema, NSString *table);
+// The window's table or Data / Structure / SQL tab changed (the owner saves the open tabs).
+@property (nonatomic, copy, nullable) void (^onTabsChanged)(MainWindowController *controller);
+// Shows that table in `tab` (0 Data, 1 Structure, 2 SQL), now or as soon as the table list has loaded.
+// A table that doesn't exist (any more) is ignored.
+- (void)openTableSchema:(NSString *)schema name:(NSString *)name tab:(NSInteger)tab;
+// @[schema, table, @(tab)] of the open table, or nil.
+@property (nonatomic, readonly, nullable) NSArray *openTable;
 // Asks whether to discard unsaved changes. YES = OK to continue (also when there is nothing to lose).
 - (BOOL)confirmDiscard;
 @end

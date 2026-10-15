@@ -22,6 +22,8 @@ static BOOL PortAccepts(uint16_t port) {
     return ok;
 }
 
+NSNotificationName const SSHTunnelStatusNotification = @"SSHTunnelStatus";
+
 @implementation SSHTunnel {
     NSString *_sshHost, *_host, *_port;
     NSTask *_task;
@@ -41,7 +43,7 @@ static BOOL PortAccepts(uint16_t port) {
 - (BOOL)start:(NSError **)error {
     NSString *message = [self launchAndWait];
     if (!message) {
-        @synchronized (self) { _established = YES; }
+        @synchronized (self) { _established = _connected = YES; } // read on the main thread once TBConnect hands it over
         return YES;
     }
     [self stop];
@@ -103,7 +105,8 @@ static BOOL PortAccepts(uint16_t port) {
 
 - (void)report:(BOOL)connected {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (self.onStatus) self.onStatus(connected);
+        self->_connected = connected;
+        [NSNotificationCenter.defaultCenter postNotificationName:SSHTunnelStatusNotification object:self];
     });
 }
 

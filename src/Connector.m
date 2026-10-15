@@ -1,8 +1,18 @@
 #import "Connector.h"
 #import "PGConnection.h"
+#import "SQLiteConnection.h"
 #import "SSHTunnel.h"
 
 void TBConnect(NSDictionary *info, NSString *password, void (^done)(id<DBConnection> connection, SSHTunnel *tunnel, NSError *error)) {
+    if ([info[@"kind"] isEqual:@"sqlite"]) { // a local file: no tunnel, no password
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            NSError *error = nil;
+            SQLiteConnection *conn = [[SQLiteConnection alloc] initWithPath:info[@"path"] readOnly:[info[@"production"] boolValue]];
+            if (![conn open:&error]) conn = nil;
+            dispatch_async(dispatch_get_main_queue(), ^{ done(conn, nil, error); });
+        });
+        return;
+    }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError *error = nil;
         NSString *host = info[@"host"], *port = [info[@"port"] length] ? info[@"port"] : @"5432";

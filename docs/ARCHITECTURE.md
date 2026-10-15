@@ -14,21 +14,32 @@
 | `src/main.m` | `AppDelegate`, menu, opening windows, quit prompt for unsaved changes |
 | `src/DBConnection.h/.m` | `DBConnection` protocol, `DBResult`, `DBQuoteIdent`, `DBError`, `DBChangeStatements` (grid changes → SQL), `DBInlineParams` (preview), `L()` / `LN()` for UI strings |
 | `src/PGConnection.m` | Postgres implementation on `libpq`; schema read from `pg_catalog` |
+| `src/SQLiteConnection.m` | SQLite implementation on the system `libsqlite3`; schema from `sqlite_schema` and `PRAGMA`s; `plaindb_like` for searching; PocketBase relations from `_collections` as foreign keys |
 | `src/SSHTunnel.m` | `ssh -N -L` via `NSTask`, waiting for the port, reconnecting |
-| `src/Connector.m` | `TBConnect`: tunnel (if any) plus database connection in the background, used by the Connections window and the toolbar switcher |
-| `src/ConnectionStore.m` | plist in `~/Library/Application Support/PlainDB/connections.plist` and the Keychain (service `PlainDB`); falls back to data saved under the old name `Tabula` |
+| `src/Connector.m` | `TBConnect`: tunnel (if any) plus database connection in the background, used by the Connections window, the toolbar switcher and for files |
+| `src/ConnectionStore.m` | plist in `~/Library/Application Support/PlainDB/connections.plist` and the Keychain (service `PlainDB`); falls back to data saved under the old name `Tabula`; recent SQLite files in user defaults |
 | `src/UI.h/.m` | design tokens (`Theme`, light and dark), small view helpers, `TBRowView`, `TBCellView`, `TBToolButton` (the design's 26 × 22 pt icon button), `TBFlippedView` |
 | `src/GridView.m` | grid for a `DBResult` (row numbers, numeric alignment, change colours); collects unsaved changes in the Data tab. Cells are `GridCellView`s that draw themselves (see DECISIONS.md, "Grid cells draw themselves"), including the boolean checkbox and the ↗ / 🖼 badge; a click is matched against where the cell last drew its badge |
+| `src/SQLCompletion.m` | what the SQL editor offers at the cursor (pure; tables, aliases, columns, functions, keywords) |
+| `src/SQLCompleter.m` | the completion list under the cursor: the editor's delegate, keys, the list window |
 | `src/SQLText.m` | SQL text view: highlighting, line number ruler |
 | `src/ReferencePopover.m` | foreign key popovers: referenced row preview and the row picker |
 | `src/DatePicker.m` | column kinds (bool, date, time, timestamp, timestamptz), Postgres date text ↔ `NSDate`, the date picker popover with its own month view (`CalendarView`) |
 | `src/ImageValue.m` | image detection and decoding for cell values, and the image preview popover |
+| `src/SchemaGraph.m` | the diagram's model and layout, without AppKit: tables, foreign key edges, `SchemaLayout` (ranks by references, ordering by neighbours, saved positions, neighbours mode) |
+| `src/SchemaSheets.m` | "Add Column…" / "Add Foreign Key…" sheets: form, live SQL preview, database errors in place |
+| `src/DiagramView.m` | draws the diagram (boxes, arrows) and handles selection, dragging, the box menu and zoom keys |
 | `src/JSONInspector.m` | JSON side panel (an `NSSplitViewController` inspector item): tree and text modes; order-keeping JSON parser, pretty-printer and minifier |
-| `src/ConnectWindowController.m` | start window: Local tab (grid of databases on the local server) and Saved tab (list, form, production frame colour) |
+| `src/ConnectWindowController.m` | start window: Local tab (grid of databases on the local server), Saved tab (list, form, production frame colour) and Files tab (recent SQLite files); files dropped on it open |
 | `src/MainWindowController.m` | connection window: sidebar, toolbar tabs Data / Structure / SQL, pending changes bar, status bar |
 | `src/SettingsWindowController.m` | Settings: interface language |
 | `Resources/{en,pl}.lproj` | Polish strings; English and Polish plural rules |
 | `tests/pg_test.m` | `PGConnection` and `DBChangeStatements` against a real local Postgres |
+| `tests/completion_test.m` | SQL completion: contexts, aliases, statements, strings and comments |
+| `tests/schema_test.m` | schema editing statements (ADD COLUMN, ADD CONSTRAINT … FOREIGN KEY) |
+| `tests/diagram_test.m` | diagram layout: parents left, cycles, no overlaps, saved positions, neighbours, column cap |
+| `tests/tunnel_test.m` | the tunnel's status reaches every window sharing it |
+| `tests/sqlite_test.m` | `SQLiteConnection` on a temporary file: schema, parameters, values, search, timeout, read-only |
 | `tests/grid_test.m` | `GridView`: swapping results, change model, ⌫, cell editing, JSON cells opening the inspector |
 | `tests/json_test.m` | JSON helpers: formatting keeps key order and string contents, parse tree |
 | `tests/store_test.m` | window frame colour rules, including older saved connections |
@@ -45,12 +56,16 @@ The connection window is an `NSSplitViewController` (sidebar + content) in a ful
 
 **Connecting.** `ConnectWindowController`, on a background thread:
 1. Optionally runs `SSHTunnel start`, which waits until `127.0.0.1:<free port>` accepts connections.
-2. Calls `PGConnection open`.
+2. Calls `PGConnection open` (`SQLiteConnection open` for a file, without a tunnel).
 3. Calls `onConnected` on the main thread, and `AppDelegate` creates a `MainWindowController`.
 
-**Queries.** Each connection has its own serial queue (`queue`), because `libpq` doesn't support concurrent calls on one connection. `MainWindowController run:done:failed:` dispatches work to that queue and delivers the result and its duration on the main thread. Order is preserved, so when clicking through tables quickly the last click wins.
+**Queries.** Each connection has its own serial queue (`queue`), because `libpq` doesn't support concurrent calls on one connection. `MainWindowController run:done:failed:` dispatches work to that queue and delivers the result and its duration on the main thread. Order is preserved, so when clicking through tables quickly the last click wins. The window writes no engine-specific SQL: time limits (`execute:params:timeout:error:`), write transactions on a read-only session (`inWriteTransaction:error:`), emptying a table and boolean literals come from the connection.
 
-**Values.** Everything is text (`NSString`) or `NSNull`. Params go through `PQexecParams` as untyped text, and Postgres infers the type from the column.
+**Tabs.** Every tab is a `MainWindowController`, made by the `AppDelegate` for the same `id<DBConnection>` and `SSHTunnel` and added with `addTabbedWindow:ordered:`; the window's `tabbingIdentifier` is the connection's identity (`TBConnectionIdentity`), so other connections never join the group. Windows don't close their connection: the `AppDelegate` does, when the last window using it closes (`TBConnectionStillUsed`). The shared tunnel posts `SSHTunnelStatusNotification`, which every tab observes, and new tabs read its `connected` state. Opening a connection that already has windows opens a plain window without restoring tabs again. The open tabs (`openTable` of each, in tab order) are saved per identity in user defaults (`openTabs`) when a table or tab changes, a tab closes and the app quits; opening that connection again restores them, skipping tables that no longer exist.
+
+**Files.** An SQLite file is a connection dictionary like any other (`kind = sqlite`, `path`, `name`, `production` = read-only, `frame`); `TBConnect` opens a `SQLiteConnection` for it. ⌘O, Finder's "Open With", the Files tab and dropped files all go through `AppDelegate openFileAtPath:`, and opening a window remembers the file in the recent list.
+
+**Values.** Everything is text (`NSString`) or `NSNull`. Postgres params go through `PQexecParams` as untyped text, and Postgres infers the type from the column. SQLite has no such inference for columns without a declared type, so its integers, reals and BLOBs come back as an `NSString` subclass that remembers the storage class and is bound back with it; an edited cell takes the class of the value it replaces (`valueForText:replacing:`). Several statements in one SQLite `execute` run inside a savepoint, all or nothing like one `PQexec`, unless the script manages transactions itself.
 
 **Dropped connection.** If `ssh` dies after the tunnel was established, `SSHTunnel` restarts it on the same port every 2 s and reports the state to the status bar. A query sent during the outage fails. On the next `execute`, `PGConnection` sees `CONNECTION_BAD` and runs `PQreset`. The failed query is not retried, because it may already have written something.
 

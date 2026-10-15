@@ -44,7 +44,9 @@ for lang, table in plurals.items():
             errors.append(f'missing {lang} plural: {key!r}')
             continue
         for form in ('one', 'other') + (('few', 'many') if lang == 'pl' else ()):
-            if specs(forms.get(form, '')) != ['%lu']:
+            found = specs(forms.get(form, ''))
+            # 'one' is only ever 1 in English and Polish, so it may leave the number out ("Delete Row")
+            if found != ['%lu'] and not (form == 'one' and found == [] and forms.get(form)):
                 errors.append(f'bad {lang} plural form {form!r} for {key!r}')
     for key in sorted(set(table) - plural):
         errors.append(f'unused {lang} plural: {key!r}')

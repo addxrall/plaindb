@@ -25,6 +25,10 @@ typedef NS_ENUM(NSInteger, CellCheckbox) { CellCheckboxNone, CellCheckboxOff, Ce
 static const CGFloat CheckboxEnd = 27; // the checkbox and its gap: text starts here (8 + 13 + 6)
 static const CGFloat BadgeSize = 15, BadgeGap = 6;
 
+static BOOL IsTrue(id value) {
+    return [value isKindOfClass:NSString.class] && [@[@"t", @"true", @"1"] containsObject:[value lowercaseString]];
+}
+
 static BOOL IsDark(NSView *view) {
     return [view.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]] == NSAppearanceNameDarkAqua;
 }
@@ -213,6 +217,8 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
         _edits = [NSMutableDictionary new];
         _deleted = [NSMutableIndexSet new];
         _inserted = [NSMutableArray new];
+        _booleanTrue = @"t";
+        _booleanFalse = @"f";
         _defaultColumns = [NSIndexSet new];
         _numericColumns = [NSIndexSet new];
         _referenceColumns = [NSIndexSet new];
@@ -283,7 +289,32 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
     [menu addItemWithTitle:L(@"Set NULL") action:@selector(setNull:) keyEquivalent:@""].target = self;
     [menu addItemWithTitle:L(@"Copy") action:@selector(copyValue:) keyEquivalent:@"c"].target = self;
     [menu addItemWithTitle:L(@"Show Referenced Row") action:@selector(openReference:) keyEquivalent:@""].target = self;
+    [menu addItem:NSMenuItem.separatorItem];
+    [menu addItemWithTitle:@"" action:@selector(deleteClickedRows:) keyEquivalent:@""].target = self; // titled in validateMenuItem
     return menu;
+}
+
+// Right-click "Delete Row": the clicked row, or the whole selection when the click is inside it.
+- (NSIndexSet *)rowsForClickedRow:(NSInteger)row {
+    return [_table.selectedRowIndexes containsIndex:row] ? _table.selectedRowIndexes : [NSIndexSet indexSetWithIndex:row];
+}
+
+// Like ⌫: deletes those rows, or restores them when all of them are already marked as deleted.
+- (void)toggleDeletionFromRow:(NSInteger)row {
+    if (row < 0 || row >= _table.numberOfRows) return;
+    [_table selectRowIndexes:[self rowsForClickedRow:row] byExtendingSelection:NO];
+    [self deleteSelectedRows];
+}
+
+- (void)deleteClickedRows:(id)sender {
+    [self toggleDeletionFromRow:_table.clickedRow];
+}
+
+- (NSString *)deleteTitleForRow:(NSInteger)row {
+    NSIndexSet *rows = [self rowsForClickedRow:row];
+    NSIndexSet *existing = [rows indexesPassingTest:^BOOL(NSUInteger i, BOOL *stop) { return i < self->_result.rows.count; }];
+    BOOL restore = existing.count && [_deleted containsIndexes:existing];
+    return restore ? LN(@"Restore %lu rows", rows.count) : LN(@"Delete %lu rows", rows.count);
 }
 
 #pragma mark - Columns
@@ -515,7 +546,7 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
 // true → false → true; NULL (or unset) → true. Set NULL is in the context menu.
 - (void)toggleRow:(NSInteger)row column:(NSInteger)col {
     id value = [self valueAtRow:row column:col];
-    [self setValue:[value isEqual:@"t"] ? @"f" : @"t" row:row column:col];
+    [self setValue:IsTrue(value) ? _booleanFalse : _booleanTrue row:row column:col];
 }
 
 - (NSRect)cellRectForRow:(NSInteger)row column:(NSInteger)col {
@@ -534,7 +565,10 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
     NSString *kind = _columnKinds[@(col)];
     if (kind && _editable && ![_deleted containsIndex:row]) {
         if ([kind isEqual:TBKindBool]) return [self toggleRow:row column:col];
-        if (_onPickDate) return _onPickDate(row, col, [self cellRectForRow:row column:col], kind);
+        // a value that isn't a date (e.g. Unix seconds in an SQLite DATETIME column) is edited as text
+        id value = [self valueAtRow:row column:col];
+        BOOL parses = ![value isKindOfClass:NSString.class] || TBDateFromValue(value, kind) != nil;
+        if (_onPickDate && parses) return _onPickDate(row, col, [self cellRectForRow:row column:col], kind);
     }
     if (_onOpenImage && ImageValueDetected([self valueAtRow:row column:col])) // raw image bytes aren't for editing by hand
         return _onOpenImage(row, col, [self cellRectForRow:row column:col]);
@@ -638,6 +672,12 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
         return onCell && _onOpenReference && [self hasReferenceAtRow:_table.clickedRow column:[self dataColumn:_table.clickedColumn]];
     }
     if (item.action == @selector(setNull:)) return _editable && onCell && ![_deleted containsIndex:_table.clickedRow];
+    if (item.action == @selector(deleteClickedRows:)) {
+        item.hidden = !_editable;
+        [item.menu itemAtIndex:[item.menu indexOfItem:item] - 1].hidden = !_editable; // its separator
+        if (_table.clickedRow >= 0) item.title = [self deleteTitleForRow:_table.clickedRow];
+        return _editable && _table.clickedRow >= 0;
+    }
     if (item.action == @selector(copy:)) return _table.selectedRowIndexes.count > 0;
     return YES;
 }
@@ -728,7 +768,7 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
     NSString *text;
     if (isDefault) text = @"DEFAULT";
     else if (placeholder) text = _nullText;
-    else if (isBool) text = [value isEqual:@"t"] ? @"true" : @"false"; // Postgres prints t / f
+    else if (isBool) text = IsTrue(value) ? @"true" : @"false"; // Postgres prints t / f, SQLite 1 / 0
     else {
         // Only what fits in the column (monospace: ~7.2 pt per character) gets laid out.
         NSUInteger fits = (NSUInteger)(column.width / 7) + 2;
@@ -755,7 +795,7 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
     cell.text = shown;
     cell.fill = rowFill ?: (edited ? Theme.changed : nil);
     cell.ring = row == _ringRow && col == _selectedColumn && !deleted;
-    cell.checkbox = !isBool ? CellCheckboxNone : [value isEqual:@"t"] ? CellCheckboxOn : CellCheckboxOff;
+    cell.checkbox = !isBool ? CellCheckboxNone : IsTrue(value) ? CellCheckboxOn : CellCheckboxOff;
     cell.badge = placeholder ? CellBadgeNone
                : [_referenceColumns containsIndex:col] ? CellBadgeReference
                : _onOpenImage && ImageValueDetected(value) ? CellBadgeImage : CellBadgeNone;

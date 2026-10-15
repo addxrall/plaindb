@@ -133,6 +133,45 @@
 			<key>other</key><string>%lu instrukcji</string>
 		</dict>
 	</dict>
+	<key>%lu foreign keys</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu klucz obcy</string>
+			<key>few</key><string>%lu klucze obce</string>
+			<key>many</key><string>%lu kluczy obcych</string>
+			<key>other</key><string>%lu kluczy obcych</string>
+		</dict>
+	</dict>
+	<key>Delete %lu rows</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>Usuń wiersz</string>
+			<key>few</key><string>Usuń %lu wiersze</string>
+			<key>many</key><string>Usuń %lu wierszy</string>
+			<key>other</key><string>Usuń %lu wierszy</string>
+		</dict>
+	</dict>
+	<key>Restore %lu rows</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>Przywróć wiersz</string>
+			<key>few</key><string>Przywróć %lu wiersze</string>
+			<key>many</key><string>Przywróć %lu wierszy</string>
+			<key>other</key><string>Przywróć %lu wierszy</string>
+		</dict>
+	</dict>
 	<key>%lu databases</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>

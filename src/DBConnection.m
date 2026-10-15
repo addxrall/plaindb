@@ -79,6 +79,23 @@ NSString *DBSearchCondition(id<DBConnection> conn, NSArray<NSString *> *columns,
     return parts.count == 1 ? parts[0] : [NSString stringWithFormat:@"(%@)", [parts componentsJoinedByString:@" OR "]];
 }
 
+NSString *DBAddColumnStatement(NSString *schema, NSString *table, NSString *column, NSString *type, BOOL notNull, NSString *defaultExpr) {
+    NSMutableString *sql = [NSMutableString stringWithFormat:@"ALTER TABLE %@.%@ ADD COLUMN %@ %@", DBQuoteIdent(schema), DBQuoteIdent(table),
+                                                             DBQuoteIdent(column), type];
+    if (notNull) [sql appendString:@" NOT NULL"];
+    if (defaultExpr.length) [sql appendFormat:@" DEFAULT %@", defaultExpr];
+    return sql;
+}
+
+NSString *DBAddForeignKeyStatement(NSString *schema, NSString *table, NSString *column, NSString *refSchema, NSString *refTable,
+                                   NSString *refColumn, NSString *onDelete) {
+    NSMutableString *sql = [NSMutableString stringWithFormat:@"ALTER TABLE %@.%@ ADD CONSTRAINT %@ FOREIGN KEY (%@) REFERENCES %@.%@ (%@)",
+        DBQuoteIdent(schema), DBQuoteIdent(table), DBQuoteIdent([NSString stringWithFormat:@"%@_%@_fkey", table, column]),
+        DBQuoteIdent(column), DBQuoteIdent(refSchema), DBQuoteIdent(refTable), DBQuoteIdent(refColumn)];
+    if (onDelete.length) [sql appendFormat:@" ON DELETE %@", onDelete];
+    return sql;
+}
+
 NSString *DBInlineParams(NSString *sql, NSArray *params) {
     NSRegularExpression *re = [NSRegularExpression regularExpressionWithPattern:@"\\$(\\d+)" options:0 error:nil];
     NSMutableString *out = [NSMutableString new];

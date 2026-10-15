@@ -150,6 +150,34 @@ static NSString *Str(const char *s) {
                   params:@[schema, table] error:error];
 }
 
+- (DBResult *)allColumns:(NSError **)error {
+    return [self execute:@"SELECT n.nspname, c.relname, a.attname, format_type(a.atttypid, a.atttypmod),"
+                          " CASE WHEN a.attnum = ANY(i.indkey) THEN 'PK' ELSE '' END"
+                          " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+                          " JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped"
+                          " LEFT JOIN pg_index i ON i.indrelid = c.oid AND i.indisprimary"
+                          " WHERE c.relkind IN ('r','p') AND n.nspname NOT IN ('pg_catalog','information_schema')"
+                          "   AND n.nspname NOT LIKE 'pg_toast%'"
+                          " ORDER BY n.nspname, c.relname, a.attnum"
+                  params:nil error:error];
+}
+
+- (DBResult *)allForeignKeys:(NSError **)error {
+    return [self execute:@"SELECT n.nspname, c.relname, a.attname, nf.nspname, cf.relname, af.attname, ''"
+                          " FROM pg_constraint con"
+                          " JOIN pg_class c ON c.oid = con.conrelid JOIN pg_namespace n ON n.oid = c.relnamespace"
+                          " JOIN pg_class cf ON cf.oid = con.confrelid JOIN pg_namespace nf ON nf.oid = cf.relnamespace"
+                          " JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]"
+                          " JOIN pg_attribute af ON af.attrelid = con.confrelid AND af.attnum = con.confkey[1]"
+                          " WHERE con.contype = 'f' AND array_length(con.conkey, 1) = 1"
+                          " ORDER BY 1, 2, 3"
+                  params:nil error:error];
+}
+
+- (BOOL)managesOwnSchema {
+    return NO;
+}
+
 - (DBResult *)databases:(NSError **)error {
     return [self execute:@"SELECT datname FROM pg_database WHERE datallowconn AND NOT datistemplate ORDER BY datname" params:nil error:error];
 }
@@ -158,6 +186,48 @@ static NSString *Str(const char *s) {
     NSMutableArray *parts = [NSMutableArray new];
     for (NSString *c in columns) [parts addObject:[NSString stringWithFormat:@"%@::text ILIKE $1", DBQuoteIdent(c)]];
     return [NSString stringWithFormat:@"(%@)", [parts componentsJoinedByString:@" OR "]];
+}
+
+- (DBResult *)execute:(NSString *)sql params:(NSArray *)params timeout:(NSTimeInterval)seconds error:(NSError **)error {
+    [self execute:[NSString stringWithFormat:@"SET statement_timeout = %ld", lround(seconds * 1000)] params:nil error:NULL];
+    DBResult *r = [self execute:sql params:params error:error];
+    [self execute:@"RESET statement_timeout" params:nil error:NULL];
+    return r;
+}
+
+// READ WRITE explicitly: a production session is read-only by default.
+- (DBResult *)inWriteTransaction:(DBResult *(^)(NSError **))work error:(NSError **)error {
+    if (![self execute:@"BEGIN READ WRITE" params:nil error:error]) return nil;
+    DBResult *r = work(error);
+    if (r && [self execute:@"COMMIT" params:nil error:error]) return r;
+    [self execute:@"ROLLBACK" params:nil error:NULL];
+    return nil;
+}
+
+- (NSString *)emptyTableStatementForSchema:(NSString *)schema table:(NSString *)table {
+    return [NSString stringWithFormat:@"TRUNCATE TABLE %@.%@", DBQuoteIdent(schema), DBQuoteIdent(table)];
+}
+
+// Params go in as untyped text and Postgres infers the column's type.
+- (id)valueForText:(NSString *)text replacing:(id)original {
+    return text;
+}
+
+- (BOOL)canAddForeignKeys {
+    return YES;
+}
+
+- (NSArray<NSString *> *)commonTypes {
+    return @[@"integer", @"bigint", @"text", @"varchar(255)", @"boolean", @"numeric(10,2)", @"date", @"timestamp",
+             @"timestamptz", @"jsonb", @"uuid", @"bytea"];
+}
+
+- (NSString *)booleanTrue {
+    return @"t";
+}
+
+- (NSString *)booleanFalse {
+    return @"f";
 }
 
 - (DBResult *)indexesInSchema:(NSString *)schema table:(NSString *)table error:(NSError **)error {

@@ -1,11 +1,15 @@
 #import "MainWindowController.h"
+#import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import "ConnectionStore.h"
 #import "Connector.h"
 #import "DatePicker.h"
+#import "DiagramView.h"
 #import "GridView.h"
 #import "ImageValue.h"
 #import "JSONInspector.h"
 #import "ReferencePopover.h"
+#import "SchemaSheets.h"
+#import "SQLCompleter.h"
 #import "SQLText.h"
 #import "SSHTunnel.h"
 #import "UI.h"
@@ -16,7 +20,7 @@ static NSToolbarItemIdentifier const ProductionItem = @"production";
 static NSToolbarItemIdentifier const SwitchItem = @"switch";
 
 typedef DBResult *_Nullable (^Work)(NSError **error);
-typedef NS_ENUM(NSInteger, Tab) { TabData, TabStructure, TabSQL, TabEmpty };
+typedef NS_ENUM(NSInteger, Tab) { TabData, TabStructure, TabSQL, TabDiagram, TabEmpty }; // segments, then the empty page
 typedef NS_ENUM(NSInteger, DataState) { DataGrid, DataLoading, DataFailed };
 typedef NS_ENUM(NSInteger, SQLState) { SQLIdle, SQLRunning, SQLDone, SQLFailed, SQLResult };
 
@@ -43,6 +47,15 @@ static NSView *Dot(NSColor *color, CGFloat size) {
     dot.cornerRadius = size / 2;
     [NSLayoutConstraint activateConstraints:@[[dot.widthAnchor constraintEqualToConstant:size], [dot.heightAnchor constraintEqualToConstant:size]]];
     return dot;
+}
+
+// Postgres "public" and SQLite "main" are left out of names shown to the user.
+static BOOL IsDefaultSchema(NSString *schema) {
+    return [schema isEqual:@"public"] || [schema isEqual:@"main"];
+}
+
+static NSString *ShownName(NSString *schema, NSString *table) {
+    return IsDefaultSchema(schema) ? table : [NSString stringWithFormat:@"%@.%@", schema, table];
 }
 
 // (valueForKey:@"firstObject" would descend into the inner arrays instead)
@@ -90,6 +103,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     // table list and current table
     NSArray<NSArray *> *_tables;
     NSArray *_sideRows; // NSString = section header, NSArray = [schema, name, kind]
+    NSArray *_pendingTable; // [schema, table, tab] to show once the table list has loaded
+    BOOL _pendingReloaded;  // the list was reloaded once for it already
     NSMutableArray<NSString *> *_pinned; // "schema.table", in the order they were pinned
     NSArray<NSString *> *_databases;     // other databases on this server, for the switcher
     NSMenu *_switchMenu;
@@ -140,6 +155,19 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     NSTextField *_sqlDoneLabel, *_sqlErrorText;
     GridView *_sqlGrid;
 
+    // Diagram tab
+    SchemaGraph *_schemaGraph;          // the whole database, nil until loaded (diagram and SQL completion)
+    SQLCompleter *_completer;
+    NSString *_diagramFocus;            // "schema.table" in neighbours mode, nil for the whole database
+    BOOL _diagramLoading;
+    DiagramView *_diagramView;
+    NSScrollView *_diagramScroll;
+    TBSwitcher *_diagramState;          // diagram, loading, empty
+    NSProgressIndicator *_diagramSpinner;
+    NSTextField *_diagramTitle;
+    NSButton *_diagramBack, *_diagramOpen, *_diagramReset;
+    NSString *_diagramStatus;
+
     // bottom bars
     NSView *_pendingBar;
     NSTextField *_pendingLabel, *_pendingDetail, *_statusLabel, *_tunnelLabel;
@@ -158,13 +186,15 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     _tunnel = tunnel;
     _info = info;
     _production = [info[@"production"] boolValue];
-    _tunnelConnected = tunnel != nil;
+    _tunnelConnected = tunnel.connected; // a tab opened while the tunnel reconnects starts with the real state
 
     window.releasedWhenClosed = NO;
     window.delegate = self;
-    window.title = info[@"name"];
-    NSString *target = [NSString stringWithFormat:@"%@@%@/%@", info[@"user"] ?: @"", [info[@"host"] length] ? info[@"host"] : @"localhost",
-                                                  info[@"database"] ?: @""];
+    window.title = info[@"name"]; // the open table's name once there is one: the tab shows it
+    window.tabbingIdentifier = TBConnectionIdentity(info); // only this connection's windows share a tab bar
+    NSString *target = [info[@"kind"] isEqual:@"sqlite"]
+        ? [info[@"path"] stringByAbbreviatingWithTildeInPath]
+        : [NSString stringWithFormat:@"%@@%@/%@", info[@"user"] ?: @"", [info[@"host"] length] ? info[@"host"] : @"localhost", info[@"database"] ?: @""];
     window.subtitle = [info[@"sshHost"] length] ? [NSString stringWithFormat:L(@"%@ via %@"), target, info[@"sshHost"]] : target;
     window.titleVisibility = NSWindowTitleHidden; // shown by the switcher instead; still used by the Window menu
     window.toolbarStyle = NSWindowToolbarStyleUnified;
@@ -181,8 +211,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     [window setContentSize:NSMakeSize(1100, 700)];
     [window center];
 
-    __weak MainWindowController *weakSelf = self;
-    _tunnel.onStatus = ^(BOOL connected) { [weakSelf setTunnelConnected:connected]; };
+    if (_tunnel) // every tab of the connection follows the shared tunnel
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(tunnelStatusChanged:) name:SSHTunnelStatusNotification object:_tunnel];
     [self setTunnelConnected:_tunnelConnected];
     [self showTab:TabData];
     [self loadTables];
@@ -192,7 +222,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 #pragma mark - UI
 
 - (void)buildUI {
-    _tabSwitch = [NSSegmentedControl segmentedControlWithLabels:@[L(@"Data"), L(@"Structure"), @"SQL"]
+    _tabSwitch = [NSSegmentedControl segmentedControlWithLabels:@[L(@"Data"), L(@"Structure"), @"SQL", L(@"Diagram")]
                                                    trackingMode:NSSegmentSwitchTrackingSelectOne
                                                          target:self
                                                          action:@selector(tabChanged:)];
@@ -225,6 +255,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
         grid.onOpenImage = ^(NSInteger row, NSInteger column, NSRect rect) { [weakSelf openImageInGrid:weakGrid row:row column:column rect:rect]; };
         grid.onOpenJSON = ^(NSInteger row, NSInteger column) { [weakSelf showJSONInGrid:weakGrid row:row column:column open:YES]; };
         grid.onSelectCell = ^(NSInteger row, NSInteger column) { [weakSelf showJSONInGrid:weakGrid row:row column:column open:NO]; };
+        grid.booleanTrue = _conn.booleanTrue; // what a toggled checkbox writes: t / f, or 1 / 0 for SQLite
+        grid.booleanFalse = _conn.booleanFalse;
     }
 }
 
@@ -293,6 +325,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     _sidebar.delegate = self;
     _sidebar.menu = [NSMenu new];
     _sidebar.menu.delegate = self; // Pin / Unpin, titled for the clicked table
+    _sidebar.target = self;
+    _sidebar.action = @selector(sidebarClicked:); // ⌘-click: new tab
     _pinned = [[NSUserDefaults.standardUserDefaults dictionaryForKey:PinsKey][[self pinsKey]] mutableCopy] ?: [NSMutableArray new];
     NSScrollView *scroll = [NSScrollView new];
     scroll.documentView = _sidebar;
@@ -324,7 +358,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
         TBLabel(L(@"No table selected"), 15, NSFontWeightSemibold, NSColor.secondaryLabelColor),
         TBLabel(L(@"Choose a table or view from the list on the left."), 12, NSFontWeightRegular, NSColor.tertiaryLabelColor),
     ]);
-    _tabs = [[TBSwitcher alloc] initWithViews:@[[self buildDataTab], [self buildStructureTab], [self buildSQLTab], empty]];
+    _tabs = [[TBSwitcher alloc] initWithViews:@[[self buildDataTab], [self buildStructureTab], [self buildSQLTab], [self buildDiagramTab], empty]];
 
     // pending changes
     _pendingLabel = TBLabel(@"", 13, NSFontWeightSemibold, NSColor.labelColor);
@@ -527,7 +561,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     NSMutableOrderedSet *linked = [NSMutableOrderedSet new];
     for (NSString *column in [_searchReferences.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
         NSArray *ref = _searchReferences[column];
-        [linked addObject:[ref[0] isEqual:_schema] || [ref[0] isEqual:@"public"] ? ref[1] : [NSString stringWithFormat:@"%@.%@", ref[0], ref[1]]];
+        [linked addObject:[ref[0] isEqual:_schema] ? ref[1] : ShownName(ref[0], ref[1])];
     }
     NSString *tables = [linked.array componentsJoinedByString:@", "];
     if (_searchTerm)
@@ -594,12 +628,226 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     return TBColumn(@[header, TBSeparator(), body], body);
 }
 
+#pragma mark - Diagram
+
+static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: {"schema.table": "{x, y}"}}
+
+// Bar (mode, back to the whole database, Open Table, Reset Layout, Export…) above the diagram, loading and empty pages.
+- (NSView *)buildDiagramTab {
+    _diagramTitle = TBLabel(@"", 13, NSFontWeightSemibold, NSColor.labelColor);
+    _diagramBack = TBButton(L(@"Whole Database"), self, @selector(showWholeDiagram:));
+    _diagramBack.controlSize = NSControlSizeSmall;
+    _diagramOpen = TBButton(L(@"Open Table"), self, @selector(openDiagramSelection:));
+    _diagramOpen.controlSize = NSControlSizeSmall;
+    NSButton *reset = _diagramReset = TBButton(L(@"Reset Layout"), self, @selector(resetDiagramLayout:));
+    reset.controlSize = NSControlSizeSmall;
+    NSButton *export = TBButton(L(@"Export…"), self, @selector(exportDiagram:));
+    export.controlSize = NSControlSizeSmall;
+    NSStackView *bar = TBBar(@[_diagramTitle, _diagramBack], @[_diagramOpen, reset, export], 38);
+
+    _diagramView = [DiagramView new];
+    _diagramScroll = [NSScrollView new];
+    _diagramScroll.documentView = _diagramView;
+    _diagramScroll.hasVerticalScroller = _diagramScroll.hasHorizontalScroller = YES;
+    _diagramScroll.autohidesScrollers = YES;
+    _diagramScroll.allowsMagnification = YES;
+    _diagramScroll.minMagnification = 0.2;
+    _diagramScroll.maxMagnification = 2;
+    _diagramScroll.backgroundColor = Theme.editor;
+    __weak MainWindowController *weakSelf = self;
+    _diagramView.onSelect = ^(SchemaTable *table) { weakSelf.diagramOpenEnabled = table != nil; };
+    _diagramView.onShowNeighbours = ^(SchemaTable *table) { [weakSelf showDiagramFocus:table.qualifiedName]; };
+    _diagramView.onOpen = ^(SchemaTable *table) { [weakSelf openTableSchema:table.schema name:table.name tab:TabData]; };
+    _diagramView.onOpenInNewTab = ^(SchemaTable *table) {
+        MainWindowController *strongSelf = weakSelf;
+        if (strongSelf.onOpenInNewTab) strongSelf.onOpenInNewTab(strongSelf, table.schema, table.name);
+    };
+    _diagramView.onMoved = ^(SchemaTable *table) { [weakSelf saveDiagramPosition:table]; };
+    _diagramView.onAddColumn = ^(SchemaTable *table) { [weakSelf presentSchemaSheet:[SchemaSheet addColumnSheetFor:table types:weakSelf.connection.commonTypes
+                                                                                                        production:[weakSelf isProduction]]]; };
+    _diagramView.onAddForeignKey = ^(SchemaTable *table, NSString *column) {
+        MainWindowController *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        [strongSelf presentSchemaSheet:[SchemaSheet addForeignKeySheetFor:table column:column tables:strongSelf->_schemaGraph.tables
+                                                               production:strongSelf->_production]];
+    };
+    if (_conn.managesOwnSchema) // PocketBase: its schema lives in _collections too, ALTER TABLE would leave that behind
+        _diagramView.addColumnBlockedReason = _diagramView.addForeignKeyBlockedReason =
+            L(@"This database's schema is managed by its application (PocketBase). Change it there.");
+    else if (!_conn.canAddForeignKeys)
+        _diagramView.addForeignKeyBlockedReason = L(@"SQLite can't add a foreign key to an existing table without rebuilding it.");
+
+    _diagramSpinner = TBSpinner(NSControlSizeRegular);
+    _diagramState = [[TBSwitcher alloc] initWithViews:@[
+        _diagramScroll,
+        TBCenteredState(@[_diagramSpinner, TBLabel(L(@"Reading the schema…"), 12, NSFontWeightRegular, NSColor.secondaryLabelColor)]),
+        TBCenteredState(@[TBLabel(L(@"No tables"), 15, NSFontWeightSemibold, NSColor.secondaryLabelColor)]),
+    ]];
+    return TBColumn(@[bar, TBSeparator(), _diagramState], _diagramState);
+}
+
+- (BOOL)isProduction {
+    return _production;
+}
+
+// Runs the sheet's SQL in a write transaction (the sheet is the confirmation, also on production) and, on success,
+// reads the schema again for the diagram, the sidebar and an open Structure tab.
+- (void)presentSchemaSheet:(SchemaSheet *)sheet {
+    __weak MainWindowController *weakSelf = self;
+    id<DBConnection> conn = _conn;
+    __block SchemaSheet *keep = sheet; // alive while it is shown
+    sheet.onRun = ^(NSString *sql, void (^done)(NSError *)) {
+        [weakSelf run:^DBResult *(NSError **e) {
+            return [conn inWriteTransaction:^DBResult *(NSError **e2) { return [conn execute:sql params:nil error:e2]; } error:e];
+        } done:^(DBResult *r, double ms) {
+            done(nil);
+            keep = nil;
+            MainWindowController *strongSelf = weakSelf;
+            [strongSelf loadDiagram];
+            [strongSelf loadTables];
+            if (strongSelf.openTable) [strongSelf loadStructure];
+        } failed:^(NSError *error, double ms) { done(error); }];
+    };
+    [sheet beginSheetOnWindow:self.window];
+}
+
+- (void)setDiagramOpenEnabled:(BOOL)enabled {
+    _diagramOpen.enabled = enabled;
+}
+
+- (void)loadDiagram {
+    _diagramLoading = YES;
+    _diagramState.selectedIndex = 1;
+    [_diagramSpinner startAnimation:nil];
+    id<DBConnection> conn = _conn;
+    __block DBResult *keys = nil;
+    [self run:^DBResult *(NSError **e) {
+        DBResult *columns = [conn allColumns:e];
+        keys = columns ? [conn allForeignKeys:e] : nil;
+        return keys ? columns : nil;
+    } done:^(DBResult *columns, double ms) {
+        self->_diagramLoading = NO;
+        [self->_diagramSpinner stopAnimation:nil];
+        self->_schemaGraph = [SchemaGraph graphWithColumns:columns foreignKeys:keys];
+        self->_completer.schema = self->_schemaGraph;
+        if (self->_diagramFocus && ![self->_schemaGraph tableNamed:self->_diagramFocus]) self->_diagramFocus = nil; // dropped since
+        [self showDiagram];
+    } failed:^(NSError *error, double ms) {
+        self->_diagramLoading = NO;
+        [self->_diagramSpinner stopAnimation:nil];
+        self->_diagramState.selectedIndex = 2;
+        if (self.currentTab == TabDiagram) [self showError:error]; // for the SQL editor's completion it just stays without names
+    }];
+}
+
+// Lays out the whole database (with the saved positions) or the focus's neighbours, and shows it.
+- (void)showDiagram {
+    if (!_schemaGraph) return;
+    SchemaGraph *graph = _schemaGraph;
+    SchemaTable *focus = _diagramFocus ? [graph tableNamed:_diagramFocus] : nil;
+    if (!focus) _diagramFocus = nil; // gone: the whole database, really (positions save again)
+    if (focus) {
+        graph = [graph neighboursOf:focus];
+        focus = [graph tableNamed:_diagramFocus];
+        SchemaLayout(graph, focus, @{});
+    } else SchemaLayout(graph, nil, [self savedDiagramPositions]);
+    _diagramView.graph = graph;
+    _diagramState.selectedIndex = graph.tables.count ? 0 : 2;
+    _diagramTitle.stringValue = focus ? [NSString stringWithFormat:L(@"Neighbours of %@"), ShownName(focus.schema, focus.name)] : L(@"Whole database");
+    _diagramBack.hidden = !focus;
+    _diagramReset.hidden = focus != nil; // only the whole-database layout is remembered
+    _diagramStatus = [NSString stringWithFormat:@"%@ · %@", LN(@"%lu tables", graph.tables.count), LN(@"%lu foreign keys", graph.edges.count)];
+    [self updateStatus];
+    // the table open in this window (or the focus) starts selected and in view
+    SchemaTable *selected = focus ?: (_table ? [graph tableNamed:[NSString stringWithFormat:@"%@.%@", _schema, _table]] : nil);
+    _diagramView.selected = selected;
+    self.diagramOpenEnabled = selected != nil;
+    if (selected) [_diagramView scrollRectToVisible:NSInsetRect(selected.frame, -40, -40)];
+}
+
+- (void)showDiagramFocus:(NSString *)qualifiedName {
+    _diagramFocus = qualifiedName;
+    [self showDiagram];
+}
+
+- (void)showWholeDiagram:(id)sender {
+    [self showDiagramFocus:nil];
+}
+
+// Sidebar: right-click → Show on Diagram (neighbours of that table).
+- (void)showOnDiagram:(NSMenuItem *)sender {
+    NSArray *t = sender.representedObject;
+    _diagramFocus = [NSString stringWithFormat:@"%@.%@", t[0], t[1]];
+    [self showTab:TabDiagram]; // loads the schema the first time
+    // a table created after the schema was read (e.g. in the SQL tab): read it again
+    if (_schemaGraph && ![_schemaGraph tableNamed:_diagramFocus]) return [self loadDiagram];
+    [self showDiagram];
+}
+
+- (void)openDiagramSelection:(id)sender {
+    SchemaTable *t = _diagramView.selected;
+    if (t) [self openTableSchema:t.schema name:t.name tab:TabData];
+}
+
+- (NSDictionary<NSString *, NSValue *> *)savedDiagramPositions {
+    NSMutableDictionary *points = [NSMutableDictionary new];
+    NSDictionary *saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:DiagramPositionsKey][TBConnectionIdentity(_info)];
+    [saved enumerateKeysAndObjectsUsingBlock:^(NSString *name, NSString *point, BOOL *stop) {
+        points[name] = [NSValue valueWithPoint:NSPointFromString(point)];
+    }];
+    return points;
+}
+
+// Only the whole-database layout is remembered; neighbours are always laid out fresh.
+- (void)saveDiagramPosition:(SchemaTable *)table {
+    if (_diagramFocus) return;
+    NSMutableDictionary *all = [[NSUserDefaults.standardUserDefaults dictionaryForKey:DiagramPositionsKey] mutableCopy] ?: [NSMutableDictionary new];
+    NSMutableDictionary *mine = [all[TBConnectionIdentity(_info)] mutableCopy] ?: [NSMutableDictionary new];
+    mine[table.qualifiedName] = NSStringFromPoint(table.frame.origin);
+    all[TBConnectionIdentity(_info)] = mine;
+    [NSUserDefaults.standardUserDefaults setObject:all forKey:DiagramPositionsKey];
+}
+
+- (void)resetDiagramLayout:(id)sender {
+    NSMutableDictionary *all = [[NSUserDefaults.standardUserDefaults dictionaryForKey:DiagramPositionsKey] mutableCopy];
+    all[TBConnectionIdentity(_info)] = nil;
+    [NSUserDefaults.standardUserDefaults setObject:all ?: @{} forKey:DiagramPositionsKey];
+    [self showDiagram];
+}
+
+// The whole diagram, not just the visible part: PNG at 2× or PDF.
+- (void)exportDiagram:(id)sender {
+    if (NSIsEmptyRect(_diagramView.contentRect)) return;
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    panel.nameFieldStringValue = [NSString stringWithFormat:@"%@.png", _info[@"name"] ?: @"diagram"];
+    panel.allowedContentTypes = @[UTTypePNG, UTTypePDF];
+    panel.allowsOtherFileTypes = NO;
+    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        if (response != NSModalResponseOK) return;
+        NSError *error = nil;
+        if (![[self diagramDataAsPDF:[panel.URL.pathExtension.lowercaseString isEqual:@"pdf"]] writeToURL:panel.URL options:NSDataWritingAtomic error:&error])
+            [self showError:error];
+    }];
+}
+
+- (NSData *)diagramDataAsPDF:(BOOL)pdf {
+    NSRect bounds = _diagramView.contentRect; // the boxes, not the zoom-dependent view size
+    if (pdf) return [_diagramView dataWithPDFInsideRect:bounds];
+    NSBitmapImageRep *rep = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL pixelsWide:(NSInteger)NSWidth(bounds) * 2
+                                                                    pixelsHigh:(NSInteger)NSHeight(bounds) * 2 bitsPerSample:8 samplesPerPixel:4
+                                                                      hasAlpha:YES isPlanar:NO colorSpaceName:NSCalibratedRGBColorSpace bytesPerRow:0 bitsPerPixel:0];
+    rep.size = bounds.size; // 2 pixels per point
+    [_diagramView cacheDisplayInRect:bounds toBitmapImageRep:rep];
+    return [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+}
+
 - (NSView *)buildSQLTab {
     NSButton *run = AccentButton([NSString stringWithFormat:@"%@  ⌘R", L(@"Run")], self, @selector(runQuery:));
     NSStackView *header = TBBar(@[TBLabel(L(@"Query"), 12, NSFontWeightRegular, NSColor.secondaryLabelColor)], @[run], 36);
     NSTextView *sqlText;
     NSScrollView *editor = SQLTextScrollView(&sqlText, YES, YES);
     _sqlText = sqlText;
+    _completer = [[SQLCompleter alloc] initWithTextView:sqlText]; // tables, columns, keywords while typing
     [editor.heightAnchor constraintEqualToConstant:214].active = YES;
 
     _sqlSpinner = TBSpinner(NSControlSizeRegular);
@@ -678,15 +926,19 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 
 - (void)showTab:(Tab)tab {
     _tabSwitch.selectedSegment = tab;
-    _tabs.selectedIndex = (tab != TabSQL && !_table) ? TabEmpty : tab;
+    _tabs.selectedIndex = (tab != TabSQL && tab != TabDiagram && !_table) ? TabEmpty : tab; // SQL and Diagram need no table
+    // the diagram and the SQL editor's completion both need the schema
+    if ((tab == TabDiagram || tab == TabSQL) && !_schemaGraph && !_diagramLoading) [self loadDiagram];
     [self updateChanges];
     [self updateStatus];
+    if (self.onTabsChanged) self.onTabsChanged(self);
 }
 
 - (void)updateStatus {
     NSString *text = !_table ? _tablesStatus : _dataStatus;
     if (self.currentTab == TabStructure && _table) text = _structureStatus;
     if (self.currentTab == TabSQL) text = _sqlStatus;
+    if (self.currentTab == TabDiagram) text = _diagramStatus;
     _statusLabel.stringValue = text ?: @"";
 }
 
@@ -696,12 +948,12 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     reconnecting ? [_tunnelSpinner startAnimation:nil] : [_tunnelSpinner stopAnimation:nil];
     _tunnelDot.hidden = reconnecting;
     ((NSBox *)_tunnelDot).fillColor = _tunnel ? Theme.green : NSColor.tertiaryLabelColor;
-    _tunnelLabel.stringValue = !_tunnel ? L(@"Direct connection") : connected ? L(@"SSH tunnel: connected") : L(@"SSH tunnel: dropped, reconnecting…");
+    _tunnelLabel.stringValue = !_tunnel ? ([_info[@"kind"] isEqual:@"sqlite"] ? L(@"SQLite file") : L(@"Direct connection")) : connected ? L(@"SSH tunnel: connected") : L(@"SSH tunnel: dropped, reconnecting…");
     _tunnelLabel.textColor = reconnecting ? Theme.orange : NSColor.secondaryLabelColor;
 }
 
 - (NSString *)displayName {
-    return [_schema isEqual:@"public"] ? _table : [NSString stringWithFormat:@"%@.%@", _schema, _table];
+    return ShownName(_schema, _table);
 }
 
 #pragma mark - Running queries
@@ -769,6 +1021,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     _sideRows = rows;
     [_sidebar reloadData];
     [self reselectCurrentTable];
+    [self applyPendingTable];
 }
 
 #pragma mark - Foreign keys
@@ -820,7 +1073,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     NSString *sql = [NSString stringWithFormat:@"SELECT * FROM %@.%@ WHERE %@ = $1 LIMIT 1", DBQuoteIdent(fk[0]), DBQuoteIdent(fk[1]), DBQuoteIdent(fk[2])];
     id<DBConnection> conn = _conn;
     [self run:^DBResult *(NSError **e) { return [conn execute:sql params:@[value] error:e]; } done:^(DBResult *r, double ms) {
-        NSString *table = [fk[0] isEqual:@"public"] ? fk[1] : [NSString stringWithFormat:@"%@.%@", fk[0], fk[1]];
+        NSString *table = ShownName(fk[0], fk[1]);
         NSString *subtitle = [NSString stringWithFormat:L(@"%@ = %@ · from %@.%@"), fk[2], value, [self displayName], name];
         ReferencePreview *preview = [[ReferencePreview alloc] initWithTitle:table subtitle:subtitle result:r];
         __weak MainWindowController *weakSelf = self;
@@ -835,7 +1088,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     if (!fk) return;
     NSString *table = [NSString stringWithFormat:@"%@.%@", DBQuoteIdent(fk[0]), DBQuoteIdent(fk[1])];
     ReferencePicker *picker = [[ReferencePicker alloc] initWithColumn:_dataGrid.result.columns[column]
-                                                                table:[fk[0] isEqual:@"public"] ? fk[1] : [NSString stringWithFormat:@"%@.%@", fk[0], fk[1]]
+                                                                table:ShownName(fk[0], fk[1])
                                                             keyColumn:fk[2]];
     __weak ReferencePicker *weakPicker = picker;
     __weak MainWindowController *weakSelf = self;
@@ -845,11 +1098,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
         NSString *where = term.length && columns ? [@" WHERE " stringByAppendingString:[conn searchConditionForColumns:columns]] : @"";
         NSString *sql = [NSString stringWithFormat:@"SELECT * FROM %@%@ ORDER BY %@ LIMIT 20", table, where, DBQuoteIdent(fk[2])];
         NSArray *params = where.length ? @[DBLikePattern(term)] : nil;
-        [weakSelf run:^DBResult *(NSError **e) {
-            [conn execute:@"SET statement_timeout = 3000" params:nil error:NULL]; // the referenced table may be big
-            DBResult *r = [conn execute:sql params:params error:e];
-            [conn execute:@"RESET statement_timeout" params:nil error:NULL];
-            return r;
+        [weakSelf run:^DBResult *(NSError **e) { // the referenced table may be big
+            return [conn execute:sql params:params timeout:3 error:e];
         } done:^(DBResult *r, double ms) {
             if (!columns) columns = r.columns;
             [weakPicker showResult:r error:nil];
@@ -866,13 +1116,88 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 }
 
 - (void)openTableSchema:(NSString *)schema name:(NSString *)name {
+    [self openTableSchema:schema name:name tab:TabData];
+}
+
+- (void)openTableSchema:(NSString *)schema name:(NSString *)name tab:(NSInteger)tab {
     [_popover close];
+    _pendingTable = @[schema, name, @(tab)];
+    [self applyPendingTable];
+}
+
+// The table asked for by openTableSchema:name:tab:, once the table list has loaded (filterChanged: calls this again).
+- (void)applyPendingTable {
+    NSArray *pending = _pendingTable;
+    if (!pending || !_tables) return;
+    _pendingTable = nil;
     NSUInteger row = [_sideRows indexOfObjectPassingTest:^BOOL(id item, NSUInteger i, BOOL *stop) {
-        return [item isKindOfClass:NSArray.class] && [item[0] isEqual:schema] && [item[1] isEqual:name];
+        return [item isKindOfClass:NSArray.class] && [item[0] isEqual:pending[0]] && [item[1] isEqual:pending[1]];
     }];
-    if (row == NSNotFound || ![self confirmDiscard]) return;
-    [_sidebar selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
-    [_sidebar scrollRowToVisible:row];
+    if (row == NSNotFound) {
+        BOOL listed = NO;
+        for (NSArray *t in _tables) listed |= [t[0] isEqual:pending[0]] && [t[1] isEqual:pending[1]];
+        if (listed && _filter.stringValue.length) { // hidden by the sidebar filter: clear it and try again
+            _filter.stringValue = @"";
+            _pendingTable = pending;
+            return [self filterChanged:nil];
+        }
+        if (!listed && !_pendingReloaded) { // created after the list was read (e.g. seen on a fresh diagram): reload once
+            _pendingReloaded = YES;
+            _pendingTable = pending;
+            return [self loadTables];
+        }
+        _pendingReloaded = NO;
+        NSBeep(); // the table is gone
+        return;
+    }
+    _pendingReloaded = NO;
+    if (!([pending[0] isEqual:_schema] && [pending[1] isEqual:_table])) {
+        if (![self confirmDiscard]) return;
+        [_sidebar selectRowIndexes:[NSIndexSet indexSetWithIndex:row] byExtendingSelection:NO];
+        [_sidebar scrollRowToVisible:row];
+    }
+    NSInteger tab = [pending[2] integerValue];
+    if (tab >= TabData && tab <= TabDiagram) [self showTab:tab];
+}
+
+// While a restored table is still waiting for the table list, that one counts, so saving doesn't drop it.
+- (NSArray *)openTable {
+    return _pendingTable ?: _table ? @[_schema, _table, @(self.currentTab)] : nil;
+}
+
+- (id<DBConnection>)connection {
+    return _conn;
+}
+
+- (SSHTunnel *)tunnel {
+    return _tunnel;
+}
+
+- (NSDictionary *)info {
+    return _info;
+}
+
+#pragma mark - Tabs
+
+// ⌘-click in the sidebar opens the table in a new tab and leaves this window's table as it is.
+- (BOOL)isCommandClick {
+    NSEvent *event = NSApp.currentEvent;
+    return (event.type == NSEventTypeLeftMouseDown || event.type == NSEventTypeLeftMouseUp) && (event.modifierFlags & NSEventModifierFlagCommand);
+}
+
+- (NSIndexSet *)tableView:(NSTableView *)tableView selectionIndexesForProposedSelection:(NSIndexSet *)proposed {
+    return tableView == _sidebar && [self isCommandClick] ? tableView.selectedRowIndexes : proposed;
+}
+
+- (void)sidebarClicked:(id)sender {
+    NSInteger row = _sidebar.clickedRow;
+    if (![self isCommandClick] || row < 0 || ![_sideRows[row] isKindOfClass:NSArray.class]) return;
+    if (self.onOpenInNewTab) self.onOpenInNewTab(self, _sideRows[row][0], _sideRows[row][1]);
+}
+
+- (void)openInNewTab:(NSMenuItem *)sender {
+    NSArray *t = sender.representedObject;
+    if (self.onOpenInNewTab) self.onOpenInNewTab(self, t[0], t[1]);
 }
 
 #pragma mark - Switching database or connection
@@ -911,39 +1236,48 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 - (void)buildSwitchMenu {
     NSMenu *menu = _switchMenu;
     menu.minimumWidth = 260;
-    NSString *host = [_info[@"host"] length] ? _info[@"host"] : @"localhost";
-    [menu addItem:[NSMenuItem sectionHeaderWithTitle:[NSString stringWithFormat:L(@"Databases on %@"), host]]];
+    if (_databases.count) { // none for a file
+        NSString *host = [_info[@"host"] length] ? _info[@"host"] : @"localhost";
+        [menu addItem:[NSMenuItem sectionHeaderWithTitle:[NSString stringWithFormat:L(@"Databases on %@"), host]]];
+    }
     for (NSString *db in _databases) {
         NSMenuItem *item = [menu addItemWithTitle:db action:@selector(switchDatabase:) keyEquivalent:@""];
         item.target = self;
         item.representedObject = db;
         item.state = [db isEqual:_info[@"database"]] ? NSControlStateValueOn : NSControlStateValueOff;
     }
-    NSArray *saved = [ConnectionStore load];
-    if (saved.count) {
-        [menu addItem:NSMenuItem.separatorItem];
-        [menu addItem:[NSMenuItem sectionHeaderWithTitle:L(@"Saved connections")]];
-    }
-    NSMutableParagraphStyle *tabs = [NSMutableParagraphStyle new];
-    tabs.tabStops = @[[[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentRight location:220 options:@{}]];
-    for (NSDictionary *c in saved) {
-        NSMenuItem *item = [menu addItemWithTitle:c[@"name"] action:@selector(switchConnection:) keyEquivalent:@""];
-        item.target = self;
-        item.representedObject = c;
-        NSString *address = [c[@"sshHost"] length] ? c[@"sshHost"]
-                                                   : [NSString stringWithFormat:@"%@:%@", [c[@"host"] length] ? c[@"host"] : @"localhost", c[@"port"] ?: @"5432"];
-        NSMutableAttributedString *title = [[NSMutableAttributedString alloc] initWithString:[c[@"name"] stringByAppendingString:@"\t"]
-                                                                                   attributes:@{NSFontAttributeName: [NSFont menuFontOfSize:0]}];
-        [title appendAttributedString:[[NSAttributedString alloc] initWithString:address attributes:@{
-            NSFontAttributeName: [NSFont menuFontOfSize:11.5], NSForegroundColorAttributeName: NSColor.secondaryLabelColor}]];
-        [title addAttribute:NSParagraphStyleAttributeName value:tabs range:NSMakeRange(0, title.length)];
-        item.attributedTitle = title;
-        NSString *frame = [ConnectionStore frameColorFor:c];
-        if (frame.length) item.image = ColorDot([Theme colorFromHex:frame fallback:Theme.productionBanner]);
-        item.state = [c[@"id"] isEqual:_info[@"id"]] && [c[@"database"] isEqual:_info[@"database"]] ? NSControlStateValueOn : NSControlStateValueOff;
+    NSArray *saved = [ConnectionStore load], *files = [ConnectionStore recentFiles];
+    for (NSArray *section in @[@[L(@"Saved connections"), saved], @[L(@"Recent files"), files]]) {
+        if (![section[1] count]) continue;
+        if (menu.numberOfItems) [menu addItem:NSMenuItem.separatorItem];
+        [menu addItem:[NSMenuItem sectionHeaderWithTitle:section[0]]];
+        for (NSDictionary *c in section[1]) {
+            NSString *address = [c[@"kind"] isEqual:@"sqlite"] ? [[c[@"path"] stringByDeletingLastPathComponent] stringByAbbreviatingWithTildeInPath]
+                              : [c[@"sshHost"] length] ? c[@"sshHost"]
+                              : [NSString stringWithFormat:@"%@:%@", [c[@"host"] length] ? c[@"host"] : @"localhost", c[@"port"] ?: @"5432"];
+            [self addConnectionItem:c address:address to:menu];
+        }
     }
     [menu addItem:NSMenuItem.separatorItem];
     [menu addItemWithTitle:L(@"Connections…") action:NSSelectorFromString(@"showConnections:") keyEquivalent:@""];
+}
+
+// A saved connection or a file: name, the address dimmed on the right, a dot in its frame colour, ✓ when open.
+- (void)addConnectionItem:(NSDictionary *)c address:(NSString *)address to:(NSMenu *)menu {
+    NSMutableParagraphStyle *tabs = [NSMutableParagraphStyle new];
+    tabs.tabStops = @[[[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentRight location:220 options:@{}]];
+    NSMenuItem *item = [menu addItemWithTitle:c[@"name"] action:@selector(switchConnection:) keyEquivalent:@""];
+    item.target = self;
+    item.representedObject = c;
+    NSMutableAttributedString *title = [[NSMutableAttributedString alloc] initWithString:[c[@"name"] stringByAppendingString:@"\t"]
+                                                                               attributes:@{NSFontAttributeName: [NSFont menuFontOfSize:0]}];
+    [title appendAttributedString:[[NSAttributedString alloc] initWithString:address attributes:@{
+        NSFontAttributeName: [NSFont menuFontOfSize:11.5], NSForegroundColorAttributeName: NSColor.secondaryLabelColor}]];
+    [title addAttribute:NSParagraphStyleAttributeName value:tabs range:NSMakeRange(0, title.length)];
+    item.attributedTitle = title;
+    NSString *frame = [ConnectionStore frameColorFor:c];
+    if (frame.length) item.image = ColorDot([Theme colorFromHex:frame fallback:Theme.productionBanner]);
+    item.state = [c[@"id"] isEqual:_info[@"id"]] && [c[@"database"] isEqual:_info[@"database"]] ? NSControlStateValueOn : NSControlStateValueOff;
 }
 
 // Same server, same credentials and tunnel settings, another database.
@@ -963,9 +1297,10 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 
 - (void)switchTo:(NSDictionary *)info {
     if ([info isEqual:_info] || ![self confirmDiscard]) return;
-    NSString *password = [info[@"id"] isEqual:@"local"] ? @"" : [ConnectionStore passwordFor:info[@"id"]] ?: @"";
+    BOOL file = [info[@"kind"] isEqual:@"sqlite"];
+    NSString *password = file || [info[@"id"] isEqual:@"local"] ? @"" : [ConnectionStore passwordFor:info[@"id"]] ?: @"";
     _statusLabel.stringValue = [info[@"sshHost"] length] ? [NSString stringWithFormat:L(@"Opening tunnel via %@…"), info[@"sshHost"]]
-                                                         : [NSString stringWithFormat:L(@"Connecting to %@…"), info[@"database"] ?: info[@"name"]];
+                                                         : [NSString stringWithFormat:L(@"Connecting to %@…"), file ? info[@"name"] : info[@"database"] ?: info[@"name"]];
     TBConnect(info, password, ^(id<DBConnection> connection, SSHTunnel *tunnel, NSError *error) {
         if (!connection) {
             [self updateStatus];
@@ -991,6 +1326,15 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     if (menu == _switchMenu) return [self buildSwitchMenu];
     NSInteger row = _sidebar.clickedRow;
     if (row < 0 || ![_sideRows[row] isKindOfClass:NSArray.class]) return;
+    NSMenuItem *tab = [menu addItemWithTitle:L(@"Open in New Tab") action:@selector(openInNewTab:) keyEquivalent:@""];
+    tab.target = self;
+    tab.representedObject = _sideRows[row];
+    if ([_sideRows[row][2] isEqual:@"table"]) { // views aren't on the diagram
+        NSMenuItem *diagram = [menu addItemWithTitle:L(@"Show on Diagram") action:@selector(showOnDiagram:) keyEquivalent:@""];
+        diagram.target = self;
+        diagram.representedObject = _sideRows[row];
+    }
+    [menu addItem:NSMenuItem.separatorItem];
     BOOL pinned = [_pinned containsObject:[self pinName:_sideRows[row]]];
     NSMenuItem *item = [menu addItemWithTitle:pinned ? L(@"Unpin") : L(@"Pin to Top") action:@selector(togglePin:) keyEquivalent:@""];
     item.target = self;
@@ -1009,7 +1353,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 // "Empty" stays disabled until the name matches; Enter and Esc cancel.
 - (void)confirmTruncate:(NSMenuItem *)sender {
     NSArray *t = sender.representedObject;
-    _truncateName = [t[0] isEqual:@"public"] ? t[1] : [NSString stringWithFormat:@"%@.%@", t[0], t[1]];
+    _truncateName = ShownName(t[0], t[1]);
 
     NSImageSymbolConfiguration *palette = [[NSImageSymbolConfiguration configurationWithPointSize:32 weight:NSFontWeightRegular]
         configurationByApplyingConfiguration:[NSImageSymbolConfiguration configurationWithPaletteColors:@[
@@ -1018,7 +1362,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
                                                             imageWithSymbolConfiguration:palette]];
     [icon setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
     NSTextField *title = TBLabel([NSString stringWithFormat:L(@"Empty the table %@?"), _truncateName], 13, NSFontWeightBold, NSColor.labelColor);
-    NSString *body = [t[3] isKindOfClass:NSString.class]
+    NSString *body = [_info[@"kind"] isEqual:@"sqlite"] ? L(@"All rows will be deleted. This can't be undone.") // DELETE, and no row estimate
+        : [t[3] isKindOfClass:NSString.class]
         ? [NSString stringWithFormat:L(@"All rows (about %@) will be deleted with TRUNCATE. If other tables reference this table, Postgres will refuse and say why. This can't be undone."),
                                      CompactCount([t[3] longLongValue])]
         : L(@"All rows will be deleted with TRUNCATE. If other tables reference this table, Postgres will refuse and say why. This can't be undone.");
@@ -1094,14 +1439,10 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 }
 
 - (void)truncateSchema:(NSString *)schema table:(NSString *)table {
-    NSString *sql = [NSString stringWithFormat:@"TRUNCATE TABLE %@.%@", DBQuoteIdent(schema), DBQuoteIdent(table)];
+    NSString *sql = [_conn emptyTableStatementForSchema:schema table:table];
     id<DBConnection> conn = _conn;
-    [self run:^DBResult *(NSError **e) { // explicit READ WRITE: a production session is read-only by default
-        if (![conn execute:@"BEGIN READ WRITE" params:nil error:e]) return nil;
-        DBResult *r = [conn execute:sql params:nil error:e];
-        if (r && [conn execute:@"COMMIT" params:nil error:e]) return r;
-        [conn execute:@"ROLLBACK" params:nil error:NULL];
-        return nil;
+    [self run:^DBResult *(NSError **e) { // a write transaction: a production session is read-only by default
+        return [conn inWriteTransaction:^DBResult *(NSError **e2) { return [conn execute:sql params:nil error:e2]; } error:e];
     } done:^(DBResult *r, double ms) {
         if ([self->_schema isEqual:schema] && [self->_table isEqual:table]) {
             [self->_dataGrid discardChanges];
@@ -1152,10 +1493,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     [self run:^DBResult *(NSError **e) {
         if (!term) return [conn execute:sql params:nil error:e];
         // ponytail: a search scans every column of the whole table; capped so a big production table can't hang the window
-        [conn execute:@"SET statement_timeout = 15000" params:nil error:NULL];
-        DBResult *r = [conn execute:sql params:params error:e];
-        [conn execute:@"RESET statement_timeout" params:nil error:NULL];
-        return r;
+        return [conn execute:sql params:params timeout:15 error:e];
     } done:^(DBResult *r, double ms) {
         [self->_dataSpinner stopAnimation:nil];
         self->_dataGrid.rowNumberOffset = offset;
@@ -1200,12 +1538,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     };
     NSString *range = [NSString stringWithFormat:@"%ld–%ld", (long)offset + 1, (long)(offset + shown)];
     id<DBConnection> conn = _conn;
-    [self run:^DBResult *(NSError **e) {
-        [conn execute:@"SET statement_timeout = 3000" params:nil error:NULL];
-        DBResult *r = [conn execute:sql params:params error:e];
-        [conn execute:@"RESET statement_timeout" params:nil error:NULL];
-        return r;
-    } done:^(DBResult *r, double ms) {
+    [self run:^DBResult *(NSError **e) { return [conn execute:sql params:params timeout:3 error:e]; } done:^(DBResult *r, double ms) {
         if (stale()) return;
         long long total = [r.rows.firstObject.firstObject longLongValue];
         // design: "1–200 of 12,345" when there are more pages, just "1–20" when everything is on this one
@@ -1331,6 +1664,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 }
 
 - (void)refresh:(id)sender {
+    if (self.currentTab == TabDiagram) return [self loadDiagram];
     if (!_table) return [self loadTables];
     if ([self confirmDiscard]) [self loadDataShowingSpinner:NO];
 }
@@ -1397,7 +1731,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     [self.window makeFirstResponder:_dataGrid.table]; // ends cell editing, if any
     dispatch_async(dispatch_get_main_queue(), ^{ // the edit is stored asynchronously
         NSArray *statements = DBChangeStatements(self->_schema, self->_table, self->_dataGrid.result, self->_pkColumns,
-                                                 self->_dataGrid.edits, self->_dataGrid.deletedRows, self->_dataGrid.insertedRows);
+                                                 [self editsForSaving], self->_dataGrid.deletedRows, self->_dataGrid.insertedRows);
         if (!statements.count) return;
         if (!self->_production) return [self executeChanges:statements];
         NSMutableArray *preview = [NSMutableArray arrayWithObject:@"BEGIN;"];
@@ -1407,28 +1741,41 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     });
 }
 
+// Edited cells as the connection wants them written: SQLite keeps the storage class of the value an edit replaces.
+- (NSDictionary<NSNumber *, NSDictionary<NSNumber *, id> *> *)editsForSaving {
+    DBResult *result = _dataGrid.result;
+    NSMutableDictionary *out = [NSMutableDictionary new];
+    [_dataGrid.edits enumerateKeysAndObjectsUsingBlock:^(NSNumber *row, NSDictionary<NSNumber *, id> *cells, BOOL *stop) {
+        NSMutableDictionary *mapped = [NSMutableDictionary new];
+        [cells enumerateKeysAndObjectsUsingBlock:^(NSNumber *col, id value, BOOL *s) {
+            id original = row.unsignedIntegerValue < result.rows.count ? result.rows[row.unsignedIntegerValue][col.unsignedIntegerValue] : nil;
+            mapped[col] = [value isKindOfClass:NSString.class] ? [self->_conn valueForText:value replacing:original] : value;
+        }];
+        out[row] = mapped;
+    }];
+    return out;
+}
+
 // Everything in one transaction. Each UPDATE/DELETE must hit exactly 1 row, otherwise ROLLBACK.
 - (void)executeChanges:(NSArray<NSArray *> *)statements {
     id<DBConnection> conn = _conn;
     [self run:^DBResult *(NSError **e) {
-        if (![conn execute:@"BEGIN READ WRITE" params:nil error:e]) return nil;
-        NSInteger total = 0;
-        for (NSArray *s in statements) {
-            DBResult *r = [conn execute:s[0] params:s[1] error:e];
-            if (r && [s[2] boolValue] && r.affected != 1) {
-                if (e) *e = DBError([NSString stringWithFormat:@"%@\n\n%@", L(@"A row changed or disappeared in the meantime, nothing was saved. Refresh the data and try again."),
-                                                              DBInlineParams(s[0], s[1])], nil);
-                r = nil;
+        return [conn inWriteTransaction:^DBResult *(NSError **e2) {
+            NSInteger total = 0;
+            for (NSArray *s in statements) {
+                DBResult *r = [conn execute:s[0] params:s[1] error:e2];
+                if (r && [s[2] boolValue] && r.affected != 1) {
+                    if (e2) *e2 = DBError([NSString stringWithFormat:@"%@\n\n%@", L(@"A row changed or disappeared in the meantime, nothing was saved. Refresh the data and try again."),
+                                                                   DBInlineParams(s[0], s[1])], nil);
+                    return nil;
+                }
+                if (!r) return nil;
+                total += r.affected;
             }
-            if (!r) {
-                [conn execute:@"ROLLBACK" params:nil error:NULL];
-                return nil;
-            }
-            total += r.affected;
-        }
-        DBResult *commit = [conn execute:@"COMMIT" params:nil error:e];
-        commit.affected = total;
-        return commit;
+            DBResult *done = [DBResult new];
+            done.affected = total;
+            return done;
+        } error:e];
     } done:^(DBResult *r, double ms) {
         [self->_dataGrid discardChanges];
         [self loadDataShowingSpinner:NO];
@@ -1472,7 +1819,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 }
 
 // On production the session is READ ONLY, so a write fails with 25006.
-// Then we ask, and after confirmation run the same SQL inside BEGIN READ WRITE … COMMIT.
+// Then we ask, and after confirmation run the same SQL in a write transaction.
 - (void)runSQL:(NSString *)sql confirmed:(BOOL)confirmed {
     [_sqlSpinner startAnimation:nil];
     _sqlState.selectedIndex = SQLRunning;
@@ -1482,11 +1829,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     id<DBConnection> conn = _conn;
     [self run:^DBResult *(NSError **e) {
         if (!confirmed) return [conn execute:sql params:nil error:e];
-        if (![conn execute:@"BEGIN READ WRITE" params:nil error:e]) return nil;
-        DBResult *r = [conn execute:sql params:nil error:e];
-        if (r && [conn execute:@"COMMIT" params:nil error:e]) return r;
-        [conn execute:@"ROLLBACK" params:nil error:NULL];
-        return nil;
+        return [conn inWriteTransaction:^DBResult *(NSError **e2) { return [conn execute:sql params:nil error:e2]; } error:e];
     } done:^(DBResult *r, double ms) {
         [self->_sqlSpinner stopAnimation:nil];
         if (r.columns.count) {
@@ -1498,6 +1841,11 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
             self->_sqlDoneLabel.stringValue = [NSString stringWithFormat:@"%@ · %@", L(@"Query executed"), LN(@"%lu rows", MAX(r.affected, 0))];
             self->_sqlState.selectedIndex = SQLDone;
             self->_sqlStatus = [NSString stringWithFormat:@"%.0f ms", ms];
+            // a statement without rows may have changed the schema (CREATE, ALTER, DROP): read it again
+            if ([sql rangeOfString:@"\\b(create|alter|drop|rename)\\b" options:NSRegularExpressionSearch | NSCaseInsensitiveSearch].location != NSNotFound) {
+                [self loadDiagram];
+                [self loadTables];
+            }
         }
         [self updateStatus];
     } failed:^(NSError *error, double ms) {
@@ -1545,7 +1893,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     count.stringValue = [t[3] isKindOfClass:NSString.class] ? CompactCount([t[3] longLongValue]) : @"";
     count.toolTip = [t[3] isKindOfClass:NSString.class] ? [NSString stringWithFormat:L(@"About %@ rows (estimate)"), FullCount([t[3] longLongValue])] : nil;
     NSMutableAttributedString *name = [NSMutableAttributedString new];
-    if (![t[0] isEqual:@"public"] && ![t[0] isEqual:@"main"])
+    if (!IsDefaultSchema(t[0]))
         [name appendAttributedString:[[NSAttributedString alloc] initWithString:[t[0] stringByAppendingString:@"."]
                                                                      attributes:@{NSForegroundColorAttributeName: NSColor.tertiaryLabelColor}]];
     [name appendAttributedString:[[NSAttributedString alloc] initWithString:t[1] attributes:@{NSForegroundColorAttributeName: NSColor.labelColor}]];
@@ -1591,7 +1939,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
 }
 
 - (BOOL)selectionShouldChangeInTableView:(NSTableView *)tableView {
-    return [self confirmDiscard];
+    return [self isCommandClick] || [self confirmDiscard]; // ⌘-click doesn't change this window's table
 }
 
 - (void)tableViewSelectionDidChange:(NSNotification *)notification {
@@ -1614,7 +1962,9 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     _sortColumn = nil;
     [_dataGrid resetSort];
     _tableLabel.stringValue = [self displayName];
+    self.window.title = [self displayName];
     [self showTab:self.currentTab == TabSQL ? TabData : self.currentTab];
+    if (self.currentTab == TabDiagram && !_diagramFocus) [self showDiagram]; // the chosen table selected and in view
     [self loadStructure];
     [self loadDataShowingSpinner:YES];
 }
@@ -1625,11 +1975,14 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     return [self confirmDiscard];
 }
 
+// The connection may be shared with other tabs: the owner closes it (and stops the tunnel) with the last window.
 - (void)windowWillClose:(NSNotification *)notification {
-    [_tunnel stop];
-    id<DBConnection> conn = _conn;
-    dispatch_async(conn.queue, ^{ [conn close]; });
+    [NSNotificationCenter.defaultCenter removeObserver:self name:SSHTunnelStatusNotification object:nil];
     if (self.onClose) self.onClose(self);
+}
+
+- (void)tunnelStatusChanged:(NSNotification *)notification {
+    [self setTunnelConnected:_tunnel.connected];
 }
 
 @end

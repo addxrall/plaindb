@@ -5,12 +5,12 @@
 <h1 align="center">PlainDB</h1>
 
 <p align="center">
-  <b>A small, native Postgres client for macOS.</b><br>
+  <b>A small, native Postgres and SQLite client for macOS.</b><br>
   Browse tables, fix a value, run a query. Locally or over SSH, without the clutter.
 </p>
 
 <p align="center">
-  macOS · Objective-C / AppKit · PostgreSQL · English &amp; Polish · MIT License
+  macOS · Objective-C / AppKit · PostgreSQL · SQLite · English &amp; Polish · MIT License
 </p>
 
 <p align="center">
@@ -22,9 +22,11 @@ PlainDB is written in Objective-C and AppKit, with no Electron and no web views.
 ## Features
 
 - **Local databases** like in Postgres.app: a grid of databases on the local server, one click connects.
+- **SQLite files**: open with ⌘O, from the Files tab of the Connections window (recent files), by dropping a file on it, or with "Open With" in Finder. The same grid, editing, search and SQL as for Postgres. Mark a file read-only to protect it like a production connection.
 - **Saved connections** with passwords in the Keychain. Any connection, local databases included, can have a coloured frame around its window (8 colours or a custom one). Production connections always have one, plus a "PRODUCTION" badge in the title bar.
 - **SSH tunnel** through the system `ssh`, so `~/.ssh/config`, keys, the agent and `ProxyJump` just work. The tunnel stays up and reconnects by itself; the status bar shows its state.
 - **Switch database or connection** from the window: click the connection name in the toolbar for the other databases on the same server (also over SSH) and your saved connections.
+- **Tabs**: right-click a table → "Open in New Tab", or ⌘-click it, to keep several tables of one connection open as native window tabs (a plain click still replaces the current table). Tabs share the connection, and they come back the next time you open that connection.
 - Sidebar with tables and views, with a filter and an estimated row count per table. Right-click a table to **pin** it to the top (remembered per connection and database) or to **empty** it (`TRUNCATE`, after typing its name).
 - **Foreign keys**: a ↗ next to the value opens the referenced row in a popover. Editing the value opens a search in the referenced table: type a name, pick the row, and its key goes into the cell.
 - **Images** stored as `bytea`, base64, `data:` URIs or image URLs get a 🖼; click it to see the picture, its size and dimensions.
@@ -34,21 +36,21 @@ PlainDB is written in Objective-C and AppKit, with no Electron and no web views.
 - **Editing** (tables with a primary key):
   - double-click or Enter edits a cell, Esc cancels;
   - `+` adds a row, ⌫ deletes or restores the selected rows;
-  - right-click gives "Set NULL" and "Copy";
+  - right-click gives "Set NULL", "Copy" and "Delete Row" (the whole selection when you right-click inside it; "Restore Row" on deleted rows);
   - changes are highlighted (yellow, green, red), summarised in a bar at the bottom and saved in one transaction with ⌘S.
 - **JSON inspector**: double-click a cell holding a JSON object or array to open it in a side panel, as a tree (keys, typed and coloured values, item counts) or as highlighted text you can edit, format and apply. Key order is kept. While the panel is open, clicking another JSON cell shows that one.
 - ⌘C copies the selected rows as tab-separated text.
 - **Structure**: columns, types, `NOT NULL`, defaults, primary key, indexes.
-- **SQL**: editor with syntax highlighting and line numbers; ⌘R runs it, or only the selection.
+- **Diagram**: every table with its columns and foreign key arrows, referenced tables on the left. Right-click a table → "Show on Diagram" (or double-click a box) for just its neighbours. Drag boxes (positions are remembered), zoom with a pinch or ⌘+ / ⌘− / ⌘0, export the whole diagram as PNG or PDF. A click only selects a box; open a table from its menu or with "Open Table". From the same menu, "Add Column…" and "Add Foreign Key…" (Postgres) show the exact SQL before running it in a transaction.
+- **PocketBase**: open its `pb_data/data.db` and the relations from `_collections` work like foreign keys (↗ previews, picking a record, ⌘F through them, diagram arrows; multi relations are dashed arrows). PocketBase manages its own schema, so schema editing is off there.
+- **SQL**: editor with syntax highlighting and line numbers; ⌘R runs it, or only the selection. Completion while typing: tables after `FROM` / `JOIN`, a table's columns after `alias.` or `table.`, otherwise the statement's columns, tables, functions and keywords (↑↓, Tab or Enter, Esc; ⌃Space opens the list).
 - **Production mode**: frame and badge in the connection's colour, and a `READ ONLY` session. Writes need confirmation with a SQL preview, then run inside `BEGIN READ WRITE … COMMIT`.
 - **Settings** (⌘,): interface language (system, English, Polski).
-
-Planned: SQLite.
 
 ## Requirements
 
 - macOS with Xcode or the Command Line Tools
-- `libpq` from Homebrew: `brew install libpq`
+- `libpq` from Homebrew: `brew install libpq` (SQLite ships with macOS)
 
 ## Building
 
@@ -56,7 +58,7 @@ Planned: SQLite.
 make          # builds build/PlainDB.app
 make run      # builds and opens it
 make install  # builds and installs to /Applications/PlainDB.app
-make test     # Postgres layer, grid and translation checks (PLAINDB_TEST_DB, default: postgres)
+make test     # Postgres and SQLite layers, grid and translation checks (PLAINDB_TEST_DB, default: postgres)
 make perf     # grid scroll speed, CPU and memory on a big page (opens a window for a few seconds)
 ```
 

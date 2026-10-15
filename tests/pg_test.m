@@ -106,6 +106,38 @@ int main(void) {
         assert([ids(@"123") isEqual:@[@"3"]]);          // numbers match as text
         assert([ids(@"9.9") isEqual:@[@"1"]]);
 
+        // the whole database's schema at once (for the diagram): tables only, single-column keys only
+        DBResult *allCols = [pg allColumns:&err];
+        NSMutableArray *carColumns = [NSMutableArray new];
+        for (NSArray *c in allCols.rows) if ([c[0] isEqual:schema] && [c[1] isEqual:@"cars"]) [carColumns addObject:c];
+        assert(carColumns.count == 5); // id, plate, driver_id, a, b
+        assert(([carColumns[0] isEqual:(@[schema, @"cars", @"id", @"integer", @"PK"])]));
+        assert(([carColumns[2] isEqual:(@[schema, @"cars", @"driver_id", @"integer", @""])]));
+        DBResult *allKeys = [pg allForeignKeys:&err];
+        NSMutableArray *carKeys = [NSMutableArray new];
+        for (NSArray *k in allKeys.rows) if ([k[0] isEqual:schema] && [k[1] isEqual:@"cars"]) [carKeys addObject:k];
+        assert(([carKeys isEqual:(@[@[schema, @"cars", @"driver_id", schema, @"drivers", @"id", @""]])]));
+        assert(!pg.managesOwnSchema);
+
+        // schema editing: add a column and a foreign key; a NOT NULL column without a default on a table with rows fails
+        // and leaves the table as it was
+        assert(pg.canAddForeignKeys && [pg.commonTypes containsObject:@"jsonb"]);
+        DBResult *(^alter)(NSString *, NSError **) = ^DBResult *(NSString *sql, NSError **e) {
+            return [pg inWriteTransaction:^DBResult *(NSError **e2) { return [pg execute:sql params:nil error:e2]; } error:e];
+        };
+        assert(alter(DBAddColumnStatement(schema, @"cars", @"note", @"text", NO, nil), &err));
+        assert(alter(DBAddForeignKeyStatement(schema, @"cars", @"b", schema, @"drivers", @"id", @"SET NULL"), &err));
+        BOOL noteSeen = NO, keySeen = NO;
+        for (NSArray *c in [pg allColumns:&err].rows) noteSeen |= [c[1] isEqual:@"cars"] && [c[2] isEqual:@"note"];
+        for (NSArray *k in [pg allForeignKeys:&err].rows) keySeen |= [k[1] isEqual:@"cars"] && [k[2] isEqual:@"b"];
+        assert(noteSeen && keySeen);
+        assert([pg execute:@"INSERT INTO cars (plate) VALUES ('ROW')" params:nil error:&err]);
+        NSError *refused = nil;
+        assert(!alter(DBAddColumnStatement(schema, @"cars", @"must", @"integer", YES, nil), &refused) && refused);
+        BOOL mustSeen = NO;
+        for (NSArray *c in [pg allColumns:&err].rows) mustSeen |= [c[1] isEqual:@"cars"] && [c[2] isEqual:@"must"];
+        assert(!mustSeen);
+
         // search through foreign keys: a car is found by its driver's name
         assert([pg execute:@"INSERT INTO drivers (name) VALUES ('Anna Kowalska'), ('Jan Nowak');"
                             "INSERT INTO cars (plate, driver_id) VALUES ('WA 1', 1), ('KR 2', 2), ('PO 3', NULL)"
@@ -125,6 +157,23 @@ int main(void) {
         assert([cars(@"a") isEqual:(@[@"WA 1", @"KR 2"])]);  // both drivers' names; the car without a driver isn't matched
         assert([DBSearchCondition(pg, @[@"id"], @{}) isEqual:[pg searchConditionForColumns:@[@"id"]]]);
 
+        // engine operations behind the protocol
+        assert([pg.booleanTrue isEqual:@"t"] && [pg.booleanFalse isEqual:@"f"]);
+        assert(([[pg emptyTableStatementForSchema:schema table:@"s"] isEqual:[NSString stringWithFormat:@"TRUNCATE TABLE \"%@\".\"s\"", schema]]));
+        NSError *slow = nil;
+        assert(![pg execute:@"SELECT pg_sleep(2)" params:nil timeout:0.2 error:&slow]);
+        assert([slow.userInfo[@"sqlstate"] isEqual:@"57014"]);
+        assert([pg execute:@"SELECT pg_sleep(0.3)" params:nil error:&err]); // the timeout was reset afterwards
+        DBResult *written = [pg inWriteTransaction:^DBResult *(NSError **e) {
+            return [pg execute:@"UPDATE s SET note = 'w' WHERE id = 1" params:nil error:e];
+        } error:&err];
+        assert(written.affected == 1);
+        assert(![pg inWriteTransaction:^DBResult *(NSError **e) {
+            [pg execute:@"UPDATE s SET note = 'rolled back' WHERE id = 1" params:nil error:e];
+            return [pg execute:@"SELECT nope" params:nil error:e];
+        } error:&err]);
+        assert([[pg execute:@"SELECT note FROM s WHERE id = 1" params:nil error:&err].rows[0][0] isEqual:@"w"]);
+
         // production mode: the server rejects writes until BEGIN READ WRITE
         PGConnection *ro = [[PGConnection alloc] initWithParams:Params() readOnly:YES];
         assert([ro open:&err]);
@@ -133,6 +182,9 @@ int main(void) {
         assert([ro execute:@"BEGIN READ WRITE" params:nil error:&err]);
         assert([ro execute:@"CREATE TEMP TABLE t (x int); INSERT INTO t VALUES (1), (2)" params:nil error:&err].affected == 2);
         assert([ro execute:@"COMMIT" params:nil error:&err]);
+        assert([ro inWriteTransaction:^DBResult *(NSError **e) {
+            return [ro execute:@"CREATE TEMP TABLE rw (x int)" params:nil error:e];
+        } error:&err]); // allowed explicitly, like a confirmed production write
 
         puts("pg_test: OK");
     }

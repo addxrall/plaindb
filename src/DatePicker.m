@@ -6,8 +6,10 @@ TBValueKind const TBKindBool = @"bool", TBKindDate = @"date", TBKindTime = @"tim
                   TBKindTimestampTZ = @"timestamptz";
 
 TBValueKind TBKindForType(NSString *type) {
-    if ([type isEqual:@"boolean"]) return TBKindBool;
+    type = type.lowercaseString; // SQLite declared types are whatever the schema says, often upper case
+    if ([type isEqual:@"boolean"] || [type isEqual:@"bool"]) return TBKindBool;
     if ([type isEqual:@"date"]) return TBKindDate;
+    if ([type isEqual:@"datetime"]) return TBKindTimestamp;
     if ([type hasPrefix:@"timestamp"]) return [type hasSuffix:@"with time zone"] && ![type hasSuffix:@"without time zone"] ? TBKindTimestampTZ : TBKindTimestamp;
     if ([type hasPrefix:@"time"] && ![type hasSuffix:@"with time zone"]) return TBKindTime;
     return nil;

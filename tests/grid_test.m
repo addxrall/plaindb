@@ -6,12 +6,21 @@
 - (void)setValue:(id)value row:(NSInteger)row column:(NSInteger)col;
 - (void)beginEditingRow:(NSInteger)row column:(NSInteger)col;
 - (void)activateRow:(NSInteger)row column:(NSInteger)col;
+- (void)toggleDeletionFromRow:(NSInteger)row;
+- (NSString *)deleteTitleForRow:(NSInteger)row;
 @end
 
 static NSTextField *Editor(GridView *grid) {
     for (NSView *v in grid.table.subviews)
         if ([v isKindOfClass:NSTextField.class]) return (NSTextField *)v;
     return nil;
+}
+
+// Ending an edit is asynchronous; under load (the whole `make test`) a fixed short wait wasn't always enough.
+static void WaitForEditorToClose(GridView *grid) {
+    NSDate *limit = [NSDate dateWithTimeIntervalSinceNow:2];
+    while (Editor(grid) && limit.timeIntervalSinceNow > 0)
+        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.02]];
 }
 
 static DBResult *Result(NSArray *columns, NSUInteger rows) {
@@ -75,7 +84,7 @@ int main(void) {
         [grid activateRow:0 column:2];
         assert(Editor(grid));
         [window makeFirstResponder:grid.table];
-        [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+        WaitForEditorToClose(grid);
         [grid setValue:@"1" row:1 column:1]; // back to the original
 
         // foreign key columns: editing opens the picker instead of a text field (only in editable grids)
@@ -102,6 +111,35 @@ int main(void) {
         [grid setValue:@"2" row:2 column:0]; // back to the original
         grid.columnKinds = @{};
 
+        // SQLite booleans: 1 / 0, read in either form
+        grid.booleanTrue = @"1";
+        grid.booleanFalse = @"0";
+        grid.columnKinds = @{@0: @"bool"};
+        [grid setValue:@"1" row:2 column:0];
+        [grid activateRow:2 column:0];
+        assert([[grid valueAtRow:2 column:0] isEqual:@"0"]);
+        [grid setValue:@"t" row:2 column:0];
+        [grid activateRow:2 column:0];
+        assert([[grid valueAtRow:2 column:0] isEqual:@"0"]);
+        [grid setValue:NSNull.null row:2 column:0];
+        [grid activateRow:2 column:0];
+        assert([[grid valueAtRow:2 column:0] isEqual:@"1"]);
+        [grid setValue:@"2" row:2 column:0];
+        grid.booleanTrue = @"t";
+        grid.booleanFalse = @"f";
+
+        // a date column whose value isn't a date (e.g. Unix seconds) is edited as text, not with the calendar
+        __block BOOL pickedDate = NO;
+        grid.onPickDate = ^(NSInteger row, NSInteger column, NSRect rect, NSString *kind) { pickedDate = YES; };
+        grid.columnKinds = @{@0: @"timestamp"};
+        [grid activateRow:2 column:0]; // value "2"
+        assert(!pickedDate && Editor(grid));
+        [window makeFirstResponder:grid.table];
+        WaitForEditorToClose(grid);
+        [grid setValue:@"2" row:2 column:0];
+        grid.columnKinds = @{};
+        grid.onPickDate = nil;
+
         // ⌫ in the table must reach GridView through the responder chain
         [grid.table selectRowIndexes:[NSIndexSet indexSetWithIndex:2] byExtendingSelection:NO];
         NSEvent *backspace = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint modifierFlags:0 timestamp:0
@@ -110,6 +148,22 @@ int main(void) {
         [grid.table keyDown:backspace];
         assert([grid.deletedRows containsIndex:2] && grid.changeCount == 2);
         [grid.table keyDown:backspace]; // second press restores
+        assert(grid.deletedRows.count == 0);
+
+        // right-click "Delete Row": the clicked row, or the whole selection when the click is inside it
+        [grid.table selectRowIndexes:[NSIndexSet indexSetWithIndex:0] byExtendingSelection:NO];
+        // (titles through LN: the test binary has no .lproj, so they come out as the keys)
+        assert([[grid deleteTitleForRow:2] isEqual:LN(@"Delete %lu rows", 1)]);
+        [grid toggleDeletionFromRow:2]; // outside the selection: only row 2
+        assert([grid.deletedRows isEqual:[NSIndexSet indexSetWithIndex:2]]);
+        assert([[grid deleteTitleForRow:2] isEqual:LN(@"Restore %lu rows", 1)]);
+        [grid.table selectRowIndexes:[NSIndexSet indexSetWithIndexesInRange:NSMakeRange(0, 2)] byExtendingSelection:NO];
+        assert([[grid deleteTitleForRow:1] isEqual:LN(@"Delete %lu rows", 2)]);
+        [grid toggleDeletionFromRow:1]; // inside the selection: rows 0 and 1
+        assert(grid.deletedRows.count == 3);
+        [grid toggleDeletionFromRow:0]; // again: restores the selection, row 2 stays deleted
+        assert([grid.deletedRows isEqual:[NSIndexSet indexSetWithIndex:2]]);
+        [grid toggleDeletionFromRow:2];
         assert(grid.deletedRows.count == 0);
 
         [grid addRow];

@@ -9,7 +9,57 @@
 ## 2026-10-15 · Postgres first, SQLite later
 
 **Context:** connecting to the production Postgres matters most.
-**Decision:** v0.1 supports Postgres only. The `DBConnection` protocol leaves room for a `SQLiteConnection`.
+**Decision:** v0.1 supported Postgres only. The `DBConnection` protocol left room for a `SQLiteConnection`, which came next (see "SQLite files").
+
+## 2026-10-15 · PocketBase relations
+
+**Context:** PocketBase files have no SQL foreign keys: relations are described in `_collections` (JSON fields, `fields` in v0.23+, `schema` before), and a relation column holds a record id, or a JSON array of ids for multi relations. The diagram showed no arrows.
+**Decision:** `SQLiteConnection` reads those relations. Single ones are returned as foreign keys (grid ↗, picker, ⌘F through keys, diagram); multi ones only reach the diagram, as dashed arrows (`allForeignKeys`' seventh column "many"), since their values aren't single ids. `managesOwnSchema` turns schema editing off: an `ALTER TABLE` from outside would leave PocketBase's own description behind.
+**Rejected (for now):** guessing relations from column names (`user_id` → `users.id`) for databases without keys: a guess can be wrong, and the user didn't ask for it.
+
+## 2026-10-15 · Schema editing from the diagram
+
+**Decision:** "Add Column…" and "Add Foreign Key…" only, from a box's menu. The statement is built by pure functions (`DBAddColumnStatement`, `DBAddForeignKeyStatement`, quoting names; the type and default go in as typed) and always shown before it runs, in a write transaction; on production the sheet is the confirmation. SQLite can't add a foreign key to an existing table, so that item is disabled there with the reason as its tooltip.
+
+## 2026-10-15 · SQL completion
+
+**Decision:** a small completion list of our own under the cursor (not `NSTextView`'s built-in completion window, which can't show a column's type next to its name). What to offer is a pure function (`SQLSuggestionsAt`) working on the text around the cursor: the current statement (between semicolons), aliases from `FROM` / `JOIN` / `UPDATE` / `INTO`, the keyword before the word. No SQL parser: a regular expression and a few rules cover typing; an unusual statement just gets fewer suggestions. The schema is the diagram's (`allColumns`, `allForeignKeys`), read when the SQL tab is first shown and again after `CREATE` / `ALTER` / `DROP` / `RENAME` run from the editor.
+
+## 2026-10-15 · Schema diagram
+
+**Decision:**
+- A Diagram tab next to Data / Structure / SQL. The schema of the whole database comes from two queries (`allColumns`, `allForeignKeys`) instead of one per table.
+- Layout without a library: a table's column is one more than the highest column of the tables it references (cycles and self-references broken), each column ordered by where its connected tables are (two sweeps). Simple, deterministic and fast enough for hundreds of tables; it's a pure function with its own test.
+- One view draws all boxes and arrows (like the grid cells), inside a magnifiable scroll view.
+- Opening a table is never automatic: a click selects, a double-click shows neighbours, "Open Table" / "Open in New Tab" are explicit.
+- Dragged positions are remembered per connection (user defaults) for the whole-database view; neighbours are always laid out fresh.
+
+**Rejected:** a force-directed layout (moves every time, hard to test); a graph library (a dependency for a few hundred lines).
+
+## 2026-10-15 · Table tabs
+
+**Decision:**
+- Native window tabs, on request only ("Open in New Tab", ⌘-click); a plain click keeps replacing the window's table.
+- Tabs share the connection and tunnel: no second login, tunnel or Keychain prompt. The connection's serial queue orders work from all tabs, and a write transaction is one queued block, so tabs can't interleave inside it. The connection closes with its last window.
+- Open tabs are restored when the connection is opened again, never at launch: a production database isn't contacted unless the user opens it. Closing a whole window closes its tabs one by one in one event, so saving waits a run-loop turn and keeps the full list when nothing is left.
+
+**Rejected:** a custom tab bar inside the window (more code, and it wouldn't behave like other Mac apps); a new connection per tab (logins, tunnels, Keychain prompts).
+
+## 2026-10-15 · SQLite files
+
+**Decision:**
+- A second `DBConnection`, `SQLiteConnection`, on the system `libsqlite3` (no new dependency). The schema is always `main`, hidden in names like `public`.
+- What the window used to write in Postgres SQL moved behind the protocol first: time limits (Postgres `SET statement_timeout`, SQLite a progress handler with a deadline; both report sqlstate `57014`), write transactions (`BEGIN READ WRITE` / `PRAGMA query_only = OFF; BEGIN`), emptying a table (`TRUNCATE` / `DELETE`) and boolean literals (`t`/`f`, `1`/`0`).
+- `$1`, `$2` … are bound by name: SQLite numbers parameters in order of first appearance, so a statement using `$2` before `$1` would bind wrongly by position.
+- Search uses a registered `plaindb_like` (LIKE on case-folded Unicode); SQLite's own `LIKE` folds ASCII only. User SQL keeps the standard `LIKE`.
+- Read-only files use `PRAGMA query_only`, refused writes report sqlstate `25006`, so the production confirmation works unchanged.
+- BLOBs are shown as `\x` hex, the form of Postgres `bytea`, so image detection works for both.
+- Values keep their SQLite storage class (integer, real, BLOB) through display and editing; binding everything as text broke saving in columns without a declared type (`WHERE id = '5'` doesn't match the integer 5) and turned edited numbers into text.
+- Several statements in the SQL tab run in a savepoint, so a failing second statement doesn't leave the first one applied (Postgres does the same in one `PQexec`).
+- PlainDB never creates a database file: a missing path is an error.
+- Declared types map to kinds case-insensitively (`BOOLEAN`, `DATE`, `DATETIME`); values that don't parse as dates are edited as text.
+
+**Rejected for now:** editing tables without a primary key through `rowid`; creating files, `ATTACH`, SQLCipher.
 
 ## 2026-10-15 · Tunnel through the system `ssh`, not libssh2
 

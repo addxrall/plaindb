@@ -55,6 +55,8 @@ NS_ASSUME_NONNULL_BEGIN
 // Enter); date/time columns call onPickDate instead of inline editing.
 @property (nonatomic, copy) NSDictionary<NSNumber *, NSString *> *columnKinds;
 @property (nonatomic, copy, nullable) void (^onPickDate)(NSInteger row, NSInteger column, NSRect cellRect, NSString *kind);
+// How booleans are written back when toggled (Postgres t / f, SQLite 1 / 0). Reading accepts t, true and 1.
+@property (nonatomic, copy) NSString *booleanTrue, *booleanFalse;
 
 // Cells whose value looks like an image (see ImageValueDetected) get a 🖼 badge; it, double-click and Enter call this.
 @property (nonatomic, copy, nullable) void (^onOpenImage)(NSInteger row, NSInteger column, NSRect cellRect);

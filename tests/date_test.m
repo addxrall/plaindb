@@ -16,6 +16,10 @@ int main(void) {
         assert(TBKindForType(@"timestamp with time zone") == TBKindTimestampTZ);
         assert(TBKindForType(@"time without time zone") == TBKindTime);
         assert(!TBKindForType(@"time with time zone") && !TBKindForType(@"text") && !TBKindForType(@"interval"));
+        // SQLite declared types
+        assert(TBKindForType(@"BOOLEAN") == TBKindBool && TBKindForType(@"bool") == TBKindBool);
+        assert(TBKindForType(@"DATE") == TBKindDate && TBKindForType(@"DATETIME") == TBKindTimestamp && TBKindForType(@"TIMESTAMP") == TBKindTimestamp);
+        assert(!TBKindForType(@"INTEGER") && !TBKindForType(@"TEXT"));
 
         assert(RoundTrip(@"2025-04-04", TBKindDate, @"2025-04-04"));
         assert(RoundTrip(@"23:59:01", TBKindTime, @"23:59:01"));
