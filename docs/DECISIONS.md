@@ -11,6 +11,18 @@
 **Context:** connecting to the production Postgres matters most.
 **Decision:** v0.1 supported Postgres only. The `DBConnection` protocol left room for a `SQLiteConnection`, which came next (see "SQLite files").
 
+## 2026-10-16 · SQLite on a server, over SSH (production PocketBase)
+
+**Context:** the user wants to browse and sometimes fix data in a production PocketBase (`pb_data/data.db`) on servers they reach over SSH, PocketBase running as a binary on some and in Docker on others. An SQLite file has no port to tunnel to; SSHFS and other network file systems break SQLite's locking next to a running PocketBase; the `sqlite3` CLI prints no column names for an empty result and would need params pasted into SQL.
+**Decision:** a small Python helper (`Resources/sqlite_remote.py`, stdlib only) runs on the server next to the file and answers JSON lines over one long-lived `ssh` session. `SQLiteConnection` keeps all SQLite knowledge and only hands statements to `RemoteSQLite` instead of `libsqlite3`, so the grid, editing, ⌘F, PocketBase relations, diagram, SQL and production mode work unchanged. Docker: the host path of the volume, not `docker exec` (Alpine images have no Python).
+**Safety:**
+- ssh as for tunnels: `BatchMode` (keys or the agent, no stored secret), `known_hosts` as configured, `--` before the host, timeouts.
+- The remote command is a constant (`python3 -I -u -c '…'` reading the helper from stdin); the helper, the path and the read-only flag travel on stdin, so nothing from the user reaches the remote shell (fish would even interpret `\` inside single quotes). `-I` keeps planted modules in the remote home out.
+- Read-only is enforced by the helper on the server: `query_only`, plus an authorizer refusing `ATTACH` (and so `VACUUM INTO`) and any pragma that sets something (`query_only` itself, `journal_mode`, which `query_only` alone allows). Only the request sent after the user confirmed a write lifts it, and the helper restores it as soon as that transaction ends, even mid-script. Prepared statements aren't cached, so one prepared while writable can't skip the check later.
+- Answers must carry the request's id; anything unexpected closes the session instead of being guessed at.
+**Consequences:** needs `python3` (3.6+) on the server. Writes bypass PocketBase's hooks and validation, as editing the local file always did. Schema queries use `sqlite_master` and one query per kind for the whole database (pragma table-valued functions joined with `sqlite_master`), because servers' SQLite can be older than 3.33 and every query is a round trip. Local read-only files still rely on `query_only` alone.
+**Rejected:** PocketBase through its HTTP API with a superuser: no SQL tab, a superuser token can't be made read-only, and SSH covers the need.
+
 ## 2026-10-15 · PocketBase relations
 
 **Context:** PocketBase files have no SQL foreign keys: relations are described in `_collections` (JSON fields, `fields` in v0.23+, `schema` before), and a relation column holds a record id, or a JSON array of ids for multi relations. The diagram showed no arrows.

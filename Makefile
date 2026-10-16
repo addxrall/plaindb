@@ -3,7 +3,7 @@ BIN     = $(APP)/Contents/MacOS/PlainDB
 PQ      = /opt/homebrew/opt/libpq
 SRC     = $(wildcard src/*.m)
 HDR     = $(wildcard src/*.h)
-RES     = $(wildcard Resources/*.lproj/* Resources/*.icns)
+RES     = $(wildcard Resources/*.lproj/* Resources/*.icns Resources/*.py)
 GRID_SRC = src/GridView.m src/DatePicker.m src/ImageValue.m src/JSONInspector.m src/SQLText.m src/UI.m src/DBConnection.m # what GridView needs
 CFLAGS  = -fobjc-arc -Wall -Wextra -Wno-unused-parameter -g -O1 -I$(PQ)/include
 LDFLAGS = -framework Cocoa -framework QuartzCore -framework Security -framework UniformTypeIdentifiers -L$(PQ)/lib -lpq -lsqlite3
@@ -30,7 +30,7 @@ install: $(BIN)
 test: tests/*.m tests/*.py $(SRC) $(HDR) $(RES)
 	mkdir -p build
 	clang $(CFLAGS) -Isrc tests/pg_test.m src/PGConnection.m src/DBConnection.m -framework Foundation -L$(PQ)/lib -lpq -o build/pg_test
-	clang $(CFLAGS) -Isrc tests/sqlite_test.m src/SQLiteConnection.m src/DBConnection.m -framework Foundation -lsqlite3 -o build/sqlite_test
+	clang $(CFLAGS) -Isrc tests/sqlite_test.m src/SQLiteConnection.m src/RemoteSQLite.m src/DBConnection.m -framework Foundation -lsqlite3 -o build/sqlite_test
 	clang $(CFLAGS) -Isrc tests/grid_test.m $(GRID_SRC) -framework Cocoa -o build/grid_test
 	clang $(CFLAGS) -Isrc tests/json_test.m src/JSONInspector.m src/SQLText.m src/UI.m src/DBConnection.m -framework Cocoa -o build/json_test
 	clang $(CFLAGS) -Isrc tests/store_test.m src/ConnectionStore.m -framework Foundation -framework Security -o build/store_test

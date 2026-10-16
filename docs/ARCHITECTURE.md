@@ -14,7 +14,9 @@
 | `src/main.m` | `AppDelegate`, menu, opening windows, quit prompt for unsaved changes |
 | `src/DBConnection.h/.m` | `DBConnection` protocol, `DBResult`, `DBQuoteIdent`, `DBError`, `DBChangeStatements` (grid changes → SQL), `DBInlineParams` (preview), `L()` / `LN()` for UI strings |
 | `src/PGConnection.m` | Postgres implementation on `libpq`; schema read from `pg_catalog` |
-| `src/SQLiteConnection.m` | SQLite implementation on the system `libsqlite3`; schema from `sqlite_schema` and `PRAGMA`s; `plaindb_like` for searching; PocketBase relations from `_collections` as foreign keys |
+| `src/SQLiteConnection.m` | SQLite implementation on the system `libsqlite3`, or on a server through `RemoteSQLite`; schema from `sqlite_master` and `PRAGMA` table-valued functions (one query for the whole database); `plaindb_like` for searching; PocketBase relations from `_collections` as foreign keys |
+| `src/RemoteSQLite.m` | runs the SQLite helper over `ssh` (`NSTask`): sends it on stdin, waits for its hello, JSON lines both ways, ssh's stderr for errors, restarts a helper that died |
+| `Resources/sqlite_remote.py` | the helper itself (Python 3 stdlib): opens the file on the server, executes requests, tags value types, enforces read-only with `query_only` and an authorizer |
 | `src/SSHTunnel.m` | `ssh -N -L` via `NSTask`, waiting for the port, reconnecting |
 | `src/Connector.m` | `TBConnect`: tunnel (if any) plus database connection in the background, used by the Connections window, the toolbar switcher and for files |
 | `src/ConnectionStore.m` | plist in `~/Library/Application Support/PlainDB/connections.plist` and the Keychain (service `PlainDB`); falls back to data saved under the old name `Tabula`; recent SQLite files in user defaults |
@@ -39,7 +41,7 @@
 | `tests/schema_test.m` | schema editing statements (ADD COLUMN, ADD CONSTRAINT … FOREIGN KEY) |
 | `tests/diagram_test.m` | diagram layout: parents left, cycles, no overlaps, saved positions, neighbours, column cap |
 | `tests/tunnel_test.m` | the tunnel's status reaches every window sharing it |
-| `tests/sqlite_test.m` | `SQLiteConnection` on a temporary file: schema, parameters, values, search, timeout, read-only |
+| `tests/sqlite_test.m` | `SQLiteConnection` on temporary files, all of it twice (local, and through the helper run by the local `python3`): schema, parameters, values, search, timeout, read-only; then the helper's own guards, restarts, banners and errors |
 | `tests/grid_test.m` | `GridView`: swapping results, change model, ⌫, cell editing, JSON cells opening the inspector |
 | `tests/json_test.m` | JSON helpers: formatting keeps key order and string contents, parse tree |
 | `tests/store_test.m` | window frame colour rules, including older saved connections |
@@ -65,6 +67,8 @@ The connection window is an `NSSplitViewController` (sidebar + content) in a ful
 
 **Files.** An SQLite file is a connection dictionary like any other (`kind = sqlite`, `path`, `name`, `production` = read-only, `frame`); `TBConnect` opens a `SQLiteConnection` for it. ⌘O, Finder's "Open With", the Files tab and dropped files all go through `AppDelegate openFileAtPath:`, and opening a window remembers the file in the recent list.
 
+**SQLite on a server.** A saved connection with `kind = sqlite-ssh` (`sshHost`, `path`, `database` = the path). `TBConnect` creates `SQLiteConnection initWithSSHHost:path:readOnly:`, whose `RemoteSQLite` launches `/usr/bin/ssh … -- <host> python3 -I -u -c '<bootstrap>'`; the bootstrap reads the helper (base64) from the first line of stdin and runs it, the second line is `{"path", "readonly"}`. The helper opens the file (`mode=rw`, never creating it), prints a hello, then answers `execute` and `writable` requests, one JSON line each, values tagged (`{"i"}`, `{"r"}`, `{"b"}`, text, null) so storage classes survive. Lines before the hello (a shell banner) are skipped; after it, an answer without the request's id closes the session. If the helper dies, the request in flight fails and the next one starts a new session. See DECISIONS.md for the safety rules.
+
 **Values.** Everything is text (`NSString`) or `NSNull`. Postgres params go through `PQexecParams` as untyped text, and Postgres infers the type from the column. SQLite has no such inference for columns without a declared type, so its integers, reals and BLOBs come back as an `NSString` subclass that remembers the storage class and is bound back with it; an edited cell takes the class of the value it replaces (`valueForText:replacing:`). Several statements in one SQLite `execute` run inside a savepoint, all or nothing like one `PQexec`, unless the script manages transactions itself.
 
 **Dropped connection.** If `ssh` dies after the tunnel was established, `SSHTunnel` restarts it on the same port every 2 s and reports the state to the status bar. A query sent during the outage fails. On the next `execute`, `PGConnection` sees `CONNECTION_BAD` and runs `PQreset`. The failed query is not retried, because it may already have written something.
@@ -82,6 +86,6 @@ Then:
 
 Switching table, page or sort order, closing the window or quitting with unsaved changes asks whether to discard them.
 
-**Production.** A connection marked as production opens with `default_transaction_read_only=on`. See DECISIONS.md.
+**Production.** A connection marked as production opens with `default_transaction_read_only=on` (Postgres) or `PRAGMA query_only` (SQLite; on a server the helper also refuses pragma writes and `ATTACH`). See DECISIONS.md.
 
 **Language.** Settings stores the choice in the app's `AppleLanguages` default; AppKit picks the matching `.lproj` at launch, so the change applies after a restart, which Settings offers.

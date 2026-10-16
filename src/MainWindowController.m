@@ -192,8 +192,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     window.delegate = self;
     window.title = info[@"name"]; // the open table's name once there is one: the tab shows it
     window.tabbingIdentifier = TBConnectionIdentity(info); // only this connection's windows share a tab bar
-    NSString *target = [info[@"kind"] isEqual:@"sqlite"]
-        ? [info[@"path"] stringByAbbreviatingWithTildeInPath]
+    NSString *target = [info[@"kind"] isEqual:@"sqlite"] ? [info[@"path"] stringByAbbreviatingWithTildeInPath]
+        : [info[@"kind"] isEqual:@"sqlite-ssh"] ? info[@"path"] // a path on the server: ~ would mean the wrong home
         : [NSString stringWithFormat:@"%@@%@/%@", info[@"user"] ?: @"", [info[@"host"] length] ? info[@"host"] : @"localhost", info[@"database"] ?: @""];
     window.subtitle = [info[@"sshHost"] length] ? [NSString stringWithFormat:L(@"%@ via %@"), target, info[@"sshHost"]] : target;
     window.titleVisibility = NSWindowTitleHidden; // shown by the switcher instead; still used by the Window menu
@@ -948,7 +948,8 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
     reconnecting ? [_tunnelSpinner startAnimation:nil] : [_tunnelSpinner stopAnimation:nil];
     _tunnelDot.hidden = reconnecting;
     ((NSBox *)_tunnelDot).fillColor = _tunnel ? Theme.green : NSColor.tertiaryLabelColor;
-    _tunnelLabel.stringValue = !_tunnel ? ([_info[@"kind"] isEqual:@"sqlite"] ? L(@"SQLite file") : L(@"Direct connection")) : connected ? L(@"SSH tunnel: connected") : L(@"SSH tunnel: dropped, reconnecting…");
+    _tunnelLabel.stringValue = !_tunnel ? ([_info[@"kind"] isEqual:@"sqlite"] ? L(@"SQLite file")
+                                           : [_info[@"kind"] isEqual:@"sqlite-ssh"] ? L(@"SQLite over SSH") : L(@"Direct connection")) : connected ? L(@"SSH tunnel: connected") : L(@"SSH tunnel: dropped, reconnecting…");
     _tunnelLabel.textColor = reconnecting ? Theme.orange : NSColor.secondaryLabelColor;
 }
 
@@ -1297,10 +1298,10 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
 
 - (void)switchTo:(NSDictionary *)info {
     if ([info isEqual:_info] || ![self confirmDiscard]) return;
-    BOOL file = [info[@"kind"] isEqual:@"sqlite"];
+    BOOL file = TBIsSQLite(info);
     NSString *password = file || [info[@"id"] isEqual:@"local"] ? @"" : [ConnectionStore passwordFor:info[@"id"]] ?: @"";
-    _statusLabel.stringValue = [info[@"sshHost"] length] ? [NSString stringWithFormat:L(@"Opening tunnel via %@…"), info[@"sshHost"]]
-                                                         : [NSString stringWithFormat:L(@"Connecting to %@…"), file ? info[@"name"] : info[@"database"] ?: info[@"name"]];
+    _statusLabel.stringValue = [info[@"sshHost"] length] && !file ? [NSString stringWithFormat:L(@"Opening tunnel via %@…"), info[@"sshHost"]]
+                                                                  : [NSString stringWithFormat:L(@"Connecting to %@…"), file ? info[@"name"] : info[@"database"] ?: info[@"name"]];
     TBConnect(info, password, ^(id<DBConnection> connection, SSHTunnel *tunnel, NSError *error) {
         if (!connection) {
             [self updateStatus];
@@ -1362,7 +1363,7 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
                                                             imageWithSymbolConfiguration:palette]];
     [icon setContentHuggingPriority:NSLayoutPriorityRequired forOrientation:NSLayoutConstraintOrientationHorizontal];
     NSTextField *title = TBLabel([NSString stringWithFormat:L(@"Empty the table %@?"), _truncateName], 13, NSFontWeightBold, NSColor.labelColor);
-    NSString *body = [_info[@"kind"] isEqual:@"sqlite"] ? L(@"All rows will be deleted. This can't be undone.") // DELETE, and no row estimate
+    NSString *body = TBIsSQLite(_info) ? L(@"All rows will be deleted. This can't be undone.") // DELETE, and no row estimate
         : [t[3] isKindOfClass:NSString.class]
         ? [NSString stringWithFormat:L(@"All rows (about %@) will be deleted with TRUNCATE. If other tables reference this table, Postgres will refuse and say why. This can't be undone."),
                                      CompactCount([t[3] longLongValue])]

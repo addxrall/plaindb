@@ -114,7 +114,13 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
         @[@"password", L(@"Password:"), @""],
         @[@"database", L(@"Database:"), @"postgres"],
         @[@"sshHost", L(@"SSH tunnel:"), L(@"user@server or alias")],
+        @[@"path", L(@"File on server:"), @"/home/pocketbase/pb_data/data.db"],
     ];
+}
+
+// A saved connection is Postgres (optionally through an SSH tunnel) or an SQLite file on a server, over ssh.
+static BOOL IsRemoteSQLite(NSDictionary *c) {
+    return [c[@"kind"] isEqual:@"sqlite-ssh"];
 }
 
 @implementation ConnectWindowController {
@@ -129,7 +135,10 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     NSTableView *_list;
     NSDictionary<NSString *, NSTextField *> *_fields;
     NSButton *_production, *_connectButton;
-    NSGridRow *_colorRow;
+    NSSegmentedControl *_kindSwitch; // PostgreSQL / SQLite over SSH
+    NSGridView *_grid;
+    NSTextField *_sshLabel, *_sshHint;
+    NSArray<NSView *> *_postgresViews, *_sqliteViews; // the rows each kind shows (by one of their views)
     NSArray<SwatchButton *> *_swatches;
     NSProgressIndicator *_spinner;
     NSImageView *_errorIcon;
@@ -252,11 +261,20 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     [_fields[@"port"].widthAnchor constraintEqualToConstant:58].active = YES;
     NSStackView *hostRow = [NSStackView stackViewWithViews:@[_fields[@"host"], labels[@"port"], _fields[@"port"]]];
     hostRow.spacing = 10;
-    NSTextField *sshHint = TBWrappingLabel(L(@"user@server or an alias from ~/.ssh/config. Empty: direct connection."), 11,
-                                           NSColor.secondaryLabelColor);
-    sshHint.preferredMaxLayoutWidth = 340;
-    NSStackView *sshColumn = TBColumn(@[_fields[@"sshHost"], sshHint], nil);
+    _sshHint = TBWrappingLabel(@"", 11, NSColor.secondaryLabelColor);
+    _sshHint.preferredMaxLayoutWidth = 340;
+    _sshLabel = labels[@"sshHost"];
+    NSStackView *sshColumn = TBColumn(@[_fields[@"sshHost"], _sshHint], nil);
     sshColumn.spacing = 4;
+    NSTextField *pathHint = TBWrappingLabel(L(@"Needs python3 on the server. PocketBase in Docker: the volume's path on the host, e.g. /var/lib/docker/volumes/pb_data/_data/data.db."),
+                                            11, NSColor.secondaryLabelColor);
+    pathHint.preferredMaxLayoutWidth = 340;
+    NSStackView *pathColumn = TBColumn(@[_fields[@"path"], pathHint], nil);
+    pathColumn.spacing = 4;
+    _kindSwitch = [NSSegmentedControl segmentedControlWithLabels:@[L(@"PostgreSQL"), L(@"SQLite over SSH")]
+                                                    trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(kindChanged:)];
+    _kindSwitch.controlSize = NSControlSizeSmall;
+    _kindSwitch.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
     _production = [NSButton checkboxWithTitle:L(@"Production: read-only, writes need confirmation") target:self action:@selector(productionToggled:)];
 
     NSMutableArray *swatches = [NSMutableArray new];
@@ -283,21 +301,27 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     [swatchRow setCustomSpacing:5.5 afterView:divider];
 
     NSGridView *grid = [NSGridView gridViewWithViews:@[
+        @[[NSTextField labelWithString:L(@"Type:")], _kindSwitch],
         @[labels[@"name"], _fields[@"name"]],
         @[labels[@"host"], hostRow],
         @[labels[@"user"], _fields[@"user"]],
         @[labels[@"password"], _fields[@"password"]],
         @[labels[@"database"], _fields[@"database"]],
         @[labels[@"sshHost"], sshColumn],
+        @[labels[@"path"], pathColumn],
         @[NSGridCell.emptyContentView, _production],
         @[[NSTextField labelWithString:L(@"Window frame:")], swatchRow],
     ]];
+    _grid = grid;
+    _postgresViews = @[hostRow, _fields[@"user"], _fields[@"password"], _fields[@"database"]];
+    _sqliteViews = @[pathColumn];
+    [grid cellForView:_kindSwitch].xPlacement = NSGridCellPlacementLeading;
+    [grid cellForView:_kindSwitch].yPlacement = NSGridCellPlacementCenter;
     [grid columnAtIndex:0].xPlacement = NSGridCellPlacementTrailing;
     [grid columnAtIndex:1].xPlacement = NSGridCellPlacementFill; // fields take the remaining width
     grid.rowAlignment = NSGridRowAlignmentFirstBaseline;
     grid.rowSpacing = 8;
     grid.columnSpacing = 10;
-    _colorRow = [grid rowAtIndex:7];
     [grid cellForView:swatchRow].yPlacement = NSGridCellPlacementCenter;
     [grid cellForView:swatchRow].xPlacement = NSGridCellPlacementLeading;
     [grid cellForView:_production].xPlacement = NSGridCellPlacementLeading;
@@ -651,7 +675,8 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     cell.textField.stringValue = [c[@"name"] length] ? c[@"name"] : L(@"Untitled");
     cell.textField.textColor = production ? Theme.red : NSColor.labelColor;
     NSTextField *sub = [cell viewWithTag:1];
-    sub.stringValue = ssh ? [NSString stringWithFormat:L(@"via %@"), c[@"sshHost"]]
+    sub.stringValue = IsRemoteSQLite(c) ? [NSString stringWithFormat:L(@"%@ via %@"), [c[@"path"] lastPathComponent] ?: @"", c[@"sshHost"] ?: @""]
+                    : ssh ? [NSString stringWithFormat:L(@"via %@"), c[@"sshHost"]]
                           : [NSString stringWithFormat:@"%@:%@", [c[@"host"] length] ? c[@"host"] : @"localhost", [c[@"port"] length] ? c[@"port"] : @"5432"];
     return cell;
 }
@@ -677,7 +702,9 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     _loadedPassword = has ? [ConnectionStore passwordFor:c[@"id"]] ?: @"" : @"";
     _fields[@"password"].stringValue = _loadedPassword;
     _production.state = [c[@"production"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
-    _production.enabled = _connectButton.enabled = has;
+    _production.enabled = _connectButton.enabled = _kindSwitch.enabled = has;
+    _kindSwitch.selectedSegment = IsRemoteSQLite(c) ? 1 : 0;
+    [self updateKindRows];
     _frameColor = has ? [ConnectionStore frameColorFor:c] : @"";
     if (_colorPanelAttached) { // an open colour panel must not recolour the next connection
         NSColorPanel.sharedColorPanel.target = nil;
@@ -707,6 +734,14 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
         if ([key isEqual:@"password"]) continue;
         c[key] = [_fields[key].stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     }
+    if (_kindSwitch.selectedSegment == 1) {
+        c[@"kind"] = @"sqlite-ssh";
+        c[@"database"] = c[@"path"]; // what identifies it, like a local file's path
+    } else {
+        if ([c[@"kind"] isEqual:@"sqlite-ssh"] && [c[@"database"] isEqual:c[@"path"]]) // the path was standing in for it
+            c[@"database"] = _fields[@"database"].stringValue = @"";
+        [c removeObjectForKey:@"kind"];
+    }
     if (![c[@"name"] length]) c[@"name"] = [c[@"host"] length] ? c[@"host"] : L(@"Untitled");
     c[@"production"] = @(_production.state == NSControlStateValueOn);
     c[@"frame"] = _frameColor;
@@ -727,7 +762,22 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     _errorIcon.hidden = !error;
 }
 
+// Postgres rows or the SQLite-over-SSH rows; the SSH field is optional for one and required for the other.
+- (void)updateKindRows {
+    BOOL sqlite = _kindSwitch.selectedSegment == 1;
+    for (NSView *v in _postgresViews) [_grid cellForView:v].row.hidden = sqlite;
+    for (NSView *v in _sqliteViews) [_grid cellForView:v].row.hidden = !sqlite;
+    _sshLabel.stringValue = sqlite ? L(@"SSH host:") : L(@"SSH tunnel:");
+    _sshHint.stringValue = sqlite ? L(@"user@server or an alias from ~/.ssh/config. Keys or the agent only, the server must be in known_hosts.")
+                                  : L(@"user@server or an alias from ~/.ssh/config. Empty: direct connection.");
+}
+
 #pragma mark - Actions
+
+- (void)kindChanged:(id)sender {
+    [self updateKindRows];
+    if (_selected >= 0) [self storeFormAt:_selected];
+}
 
 - (void)productionToggled:(id)sender {
     [self updateProductionRow];
@@ -842,11 +892,14 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
     if (_selected < 0 || _connecting) return;
     [self storeFormAt:_selected];
     NSDictionary *info = [_connections[_selected] copy];
+    if (IsRemoteSQLite(info) && (![info[@"sshHost"] length] || ![info[@"path"] length]))
+        return [self showStatus:L(@"Enter the SSH host and the file's path on the server.") error:YES];
     _connectButton.enabled = NO;
     [_spinner startAnimation:nil];
     NSString *host = [info[@"host"] length] ? info[@"host"] : @"localhost";
-    [self showStatus:[info[@"sshHost"] length] ? [NSString stringWithFormat:L(@"Opening tunnel via %@…"), info[@"sshHost"]]
-                                               : [NSString stringWithFormat:L(@"Connecting to %@…"), host]
+    [self showStatus:IsRemoteSQLite(info) ? [NSString stringWithFormat:L(@"Connecting to %@…"), info[@"sshHost"]]
+                     : [info[@"sshHost"] length] ? [NSString stringWithFormat:L(@"Opening tunnel via %@…"), info[@"sshHost"]]
+                     : [NSString stringWithFormat:L(@"Connecting to %@…"), host]
                error:NO];
     [self connectWithInfo:info password:_fields[@"password"].stringValue done:^(NSError *error) {
         [self->_spinner stopAnimation:nil];

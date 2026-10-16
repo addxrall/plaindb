@@ -25,6 +25,7 @@ PlainDB is written in Objective-C and AppKit, with no Electron and no web views.
 
 - **Local databases** like in Postgres.app: a grid of databases on the local server, one click connects.
 - **SQLite files**: open with ⌘O, from the Files tab of the Connections window (recent files), by dropping a file on it, or with "Open With" in Finder. The same grid, editing, search, SQL and diagram as for Postgres. Mark a file read-only to protect it like a production connection.
+- **SQLite on a server, over SSH**, e.g. a production PocketBase: a saved connection of the type "SQLite over SSH" with the SSH host and the file's path on the server. Everything works as for a local file. See [SQLite over SSH](#sqlite-over-ssh).
 - **PocketBase**: open its `pb_data/data.db` and the relations from `_collections` work like foreign keys (↗ previews, picking a record, ⌘F through them, diagram arrows; multi relations are dashed arrows). PocketBase manages its own schema, so schema editing is off there.
 - **Saved connections** with passwords in the Keychain. Any connection, local databases included, can have a coloured frame around its window (8 colours or a custom one). Production connections always have one, plus a "PRODUCTION" badge in the title bar.
 - **SSH tunnel** through the system `ssh`, so `~/.ssh/config`, keys, the agent and `ProxyJump` just work. The tunnel stays up and reconnects by itself; the status bar shows its state.
@@ -100,6 +101,22 @@ Put `user@server` or an alias from `~/.ssh/config` in the **SSH tunnel** field. 
 
 PlainDB runs `ssh` in `BatchMode`, so it never asks for a password. You need a key (ideally in the agent), and the server must already be in `known_hosts`. If it isn't yet, connect to it once by hand from a terminal.
 
+## SQLite over SSH
+
+For an SQLite database that lives on a server, like a production PocketBase's `pb_data/data.db`. In **Saved**, set **Type** to "SQLite over SSH", then fill in the **SSH host** (`user@server` or an alias from `~/.ssh/config`) and the **File on server** (an absolute path).
+
+PlainDB opens one `ssh` session and runs a small helper with the server's `python3` next to the file, so SQLite's locking works as usual and writing while PocketBase runs is safe. A network file system (SSHFS) is not: it can corrupt the database.
+
+What the server needs:
+- `python3` 3.6 or newer (Debian and Ubuntu have it);
+- a user that can read and write the database file and its directory (SQLite keeps `-wal` and `-shm` files next to it). It doesn't need root.
+- PocketBase in Docker: use the volume's path on the host, ideally a bind mount owned by that user, e.g. `/srv/pocketbase/pb_data/data.db`; a named volume lives under `/var/lib/docker/volumes/<name>/_data/`, which usually needs root.
+
+How it stays safe:
+- `ssh` runs as for tunnels: keys or the agent only (`BatchMode`), the server must already be in `known_hosts`, and PlainDB stores no SSH secret.
+- The command run on the server is always the same; the helper and the path are sent through the encrypted session's input, so nothing you type reaches the remote shell. Nothing is installed or left on the server.
+- Mark the connection **Production** and it's read-only on the server itself: the helper refuses writes, `ATTACH`, `VACUUM INTO` and changing pragmas, even typed in the SQL tab. A write you confirm runs in one transaction, and the session is read-only again right after it.
+
 ## Translations
 
 UI strings are written in English in the code (`L(@"…")`, plurals with `LN(@"%lu rows", n)`). Polish lives in `Resources/pl.lproj/Localizable.strings` and `Localizable.stringsdict`. `make test` fails when a string is missing, unused, or its format specifiers don't match.
@@ -112,6 +129,7 @@ UI strings are written in English in the code (`L(@"…")`, plurals with `LN(@"%
 - Foreign keys spanning several columns aren't shown (no ↗, no diagram arrow).
 - SQLite can't add a foreign key to an existing table, so "Add Foreign Key…" is off for SQLite files.
 - The schema of a PocketBase database is read-only in PlainDB; change it in PocketBase.
+- Edits to a PocketBase database go straight to SQLite, so PocketBase's hooks, validation and realtime events don't see them.
 - SQL completion follows simple rules, not a full SQL parser, so unusual statements may get generic suggestions.
 
 Technical details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Design decisions: [docs/DECISIONS.md](docs/DECISIONS.md).

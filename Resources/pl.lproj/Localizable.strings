@@ -159,6 +159,17 @@
 "Choose an SQLite database file." = "Wybierz plik bazy SQLite.";
 "Couldn't open %@" = "Nie udało się otworzyć %@";
 "SQLite file" = "Plik SQLite";
+"SQLite over SSH" = "SQLite przez SSH";
+"PostgreSQL" = "PostgreSQL";
+"SSH host:" = "Host SSH:";
+"File on server:" = "Plik na serwerze:";
+"user@server or an alias from ~/.ssh/config. Keys or the agent only, the server must be in known_hosts." = "user@serwer albo alias z ~/.ssh/config. Tylko klucze lub agent, serwer musi być w known_hosts.";
+"Needs python3 on the server. PocketBase in Docker: the volume's path on the host, e.g. /var/lib/docker/volumes/pb_data/_data/data.db." = "Wymaga python3 na serwerze. PocketBase w Dockerze: ścieżka wolumenu na hoście, np. /var/lib/docker/volumes/pb_data/_data/data.db.";
+"Enter the SSH host and the file's path on the server." = "Podaj host SSH i ścieżkę do pliku na serwerze.";
+"python3 wasn't found on the server. %@" = "Na serwerze nie ma python3. %@";
+"The connection to the server ended." = "Połączenie z serwerem zostało zakończone.";
+"Lost the connection to the server: %@" = "Utracono połączenie z serwerem: %@";
+"The server sent an unexpected answer, so the connection was closed." = "Serwer odpowiedział w nieoczekiwany sposób, więc połączenie zostało zamknięte.";
 "Recent files" = "Ostatnie pliki";
 "Files" = "Pliki";
 "Read-only" = "Tylko do odczytu";

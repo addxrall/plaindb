@@ -33,6 +33,9 @@ int main(void) {
         // tabs: identity per connection, a connection stays open while another window uses it, saved tab lists
         assert([TBConnectionIdentity(@{@"kind": @"sqlite", @"path": @"/x/a.db"}) isEqual:@"file:/x/a.db"]);
         assert([TBConnectionIdentity(@{@"id": @"c1", @"database": @"shop"}) isEqual:@"c1/shop"]);
+        // SQLite on a server is a saved connection (id, database = the path) that opens like a file
+        assert(TBIsSQLite(@{@"kind": @"sqlite"}) && TBIsSQLite(@{@"kind": @"sqlite-ssh"}) && !TBIsSQLite(@{@"id": @"c1"}));
+        assert([TBConnectionIdentity(@{@"kind": @"sqlite-ssh", @"id": @"c2", @"database": @"/srv/pb/data.db"}) isEqual:@"c2//srv/pb/data.db"]);
         NSObject *c1 = [NSObject new], *c2 = [NSObject new];
         assert(TBConnectionStillUsed(@[c2, c1], c1) && !TBConnectionStillUsed(@[c2], c1) && !TBConnectionStillUsed(@[], c1));
         NSDictionary *saved = TBSavedTabsWith(@{}, @"c1/shop", @[@[@"public", @"claims", @0], @[@"public", @"drivers", @1]]);

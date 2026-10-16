@@ -1,13 +1,17 @@
 #import "Connector.h"
+#import "ConnectionStore.h"
 #import "PGConnection.h"
 #import "SQLiteConnection.h"
 #import "SSHTunnel.h"
 
 void TBConnect(NSDictionary *info, NSString *password, void (^done)(id<DBConnection> connection, SSHTunnel *tunnel, NSError *error)) {
-    if ([info[@"kind"] isEqual:@"sqlite"]) { // a local file: no tunnel, no password
+    if (TBIsSQLite(info)) { // a local file, or one on a server through ssh: no tunnel, no password
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
             NSError *error = nil;
-            SQLiteConnection *conn = [[SQLiteConnection alloc] initWithPath:info[@"path"] readOnly:[info[@"production"] boolValue]];
+            BOOL readOnly = [info[@"production"] boolValue];
+            SQLiteConnection *conn = [info[@"kind"] isEqual:@"sqlite-ssh"]
+                ? [[SQLiteConnection alloc] initWithSSHHost:info[@"sshHost"] path:info[@"path"] readOnly:readOnly]
+                : [[SQLiteConnection alloc] initWithPath:info[@"path"] readOnly:readOnly];
             if (![conn open:&error]) conn = nil;
             dispatch_async(dispatch_get_main_queue(), ^{ done(conn, nil, error); });
         });

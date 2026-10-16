@@ -1,5 +1,8 @@
 #import "SQLiteConnection.h"
+#import "RemoteSQLite.h"
 #import <sqlite3.h>
+
+NSString *const SQLiteRemoteBootstrap = @"import sys,base64;exec(base64.b64decode(sys.stdin.readline()))";
 
 static NSString *Text(const unsigned char *s) {
     return s ? ([NSString stringWithUTF8String:(const char *)s] ?: @"") : @"";
@@ -92,8 +95,32 @@ static void LikeFunction(sqlite3_context *context, int argc, sqlite3_value **arg
     }
 }
 
+// The helper's value tags (see Resources/sqlite_remote.py) ↔ what a local connection reads and binds.
+static id RemoteValue(id v) {
+    if (![v isKindOfClass:NSDictionary.class]) return v; // NSNull or TEXT
+    if (v[@"i"]) return [[SQLiteValue alloc] initWithString:v[@"i"] storage:SQLITE_INTEGER];
+    if (v[@"r"]) return [[SQLiteValue alloc] initWithString:v[@"r"] storage:SQLITE_FLOAT];
+    NSData *blob = [[NSData alloc] initWithBase64EncodedString:v[@"b"] ?: @"" options:0];
+    NSMutableString *hex = [NSMutableString stringWithString:@"\\x"];
+    const uint8_t *bytes = blob.bytes;
+    for (NSUInteger i = 0; i < blob.length; i++) [hex appendFormat:@"%02x", bytes[i]];
+    return [[SQLiteValue alloc] initWithString:hex storage:SQLITE_BLOB];
+}
+
+static id RemoteParam(id p) {
+    if (p == NSNull.null) return p;
+    int storage = [p isKindOfClass:SQLiteValue.class] ? ((SQLiteValue *)p).storage : SQLITE_TEXT;
+    NSData *blob = storage == SQLITE_BLOB ? HexBytes(p) : nil;
+    NSString *text = [NSString stringWithString:[p description]]; // a plain copy for JSON
+    if (storage == SQLITE_INTEGER) return @{@"i": text};
+    if (storage == SQLITE_FLOAT) return @{@"r": text};
+    if (blob) return @{@"b": [blob base64EncodedStringWithOptions:0]};
+    return text;
+}
+
 @implementation SQLiteConnection {
     sqlite3 *_db;
+    RemoteSQLite *_remote; // set for a file on a server; then _db stays NULL
     NSString *_path;
     BOOL _readOnly;
     CFAbsoluteTime _deadline; // 0 = no time limit
@@ -115,6 +142,32 @@ static int Progress(void *context) {
     return self;
 }
 
+- (instancetype)initWithSSHHost:(NSString *)sshHost path:(NSString *)path readOnly:(BOOL)readOnly {
+    NSArray *command = @[
+        @"/usr/bin/ssh", @"-T",
+        @"-o", @"BatchMode=yes", // keys or the agent only: the app has no terminal for prompts
+        @"-o", @"ConnectTimeout=10",
+        @"-o", @"ServerAliveInterval=30",
+        @"-o", @"ServerAliveCountMax=3",
+        // whatever ~/.ssh/config says for this host: no agent, X11 or port forwarding into a long-lived session
+        @"-o", @"ForwardAgent=no",
+        @"-o", @"ForwardX11=no",
+        @"-o", @"ClearAllForwardings=yes",
+        @"-o", @"PermitLocalCommand=no",
+        @"--", sshHost, // so a host can't be taken for an option
+        // -I: no PYTHON* variables, user site or current directory, so nothing planted on the server runs
+        [NSString stringWithFormat:@"python3 -I -u -c '%@'", SQLiteRemoteBootstrap],
+    ];
+    NSString *helper = [NSString stringWithContentsOfFile:[NSBundle.mainBundle pathForResource:@"sqlite_remote" ofType:@"py"]
+                                                 encoding:NSUTF8StringEncoding error:NULL];
+    return [self initWithCommand:command helper:helper ?: @"" path:path readOnly:readOnly];
+}
+
+- (instancetype)initWithCommand:(NSArray<NSString *> *)command helper:(NSString *)helper path:(NSString *)path readOnly:(BOOL)readOnly {
+    if ((self = [self initWithPath:path readOnly:readOnly])) _remote = [[RemoteSQLite alloc] initWithCommand:command helper:helper];
+    return self;
+}
+
 - (void)dealloc {
     [self close];
 }
@@ -126,6 +179,7 @@ static int Progress(void *context) {
 }
 
 - (BOOL)open:(NSError **)error {
+    if (_remote) return [_remote startWithPath:_path readOnly:_readOnly error:error]; // the helper does the checks below
     // never create a file: a missing one is an error, not a new empty database
     if (![NSFileManager.defaultManager fileExistsAtPath:_path]) {
         if (error) *error = DBError([NSString stringWithFormat:L(@"The file %@ doesn't exist."), _path.lastPathComponent], nil);
@@ -140,7 +194,7 @@ static int Progress(void *context) {
     sqlite3_progress_handler(_db, 1000, Progress, (__bridge void *)self);
     sqlite3_create_function_v2(_db, "plaindb_like", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, LikeFunction, NULL, NULL, NULL);
     // reading the schema also fails for files that aren't SQLite databases
-    if (![self execute:@"SELECT count(*) FROM sqlite_schema" params:nil error:error] ||
+    if (![self execute:@"SELECT count(*) FROM sqlite_master" params:nil error:error] ||
         ![self execute:@"PRAGMA foreign_keys = ON" params:nil error:error] ||
         (_readOnly && ![self execute:@"PRAGMA query_only = ON" params:nil error:error])) {
         [self close];
@@ -150,14 +204,47 @@ static int Progress(void *context) {
 }
 
 - (void)close {
+    [_remote stop];
     if (_db) sqlite3_close_v2(_db);
     _db = NULL;
+}
+
+- (DBResult *)remoteExecute:(NSString *)sql params:(NSArray *)params error:(NSError **)error {
+    NSMutableArray *encoded = [NSMutableArray new];
+    for (id p in params) [encoded addObject:RemoteParam(p)];
+    NSMutableDictionary *request = [@{@"op": @"execute", @"sql": sql, @"params": encoded} mutableCopy];
+    if (_deadline > 0) request[@"timeout"] = @(MAX(0.001, _deadline - CFAbsoluteTimeGetCurrent()));
+    NSDictionary *answer = [_remote send:request error:error];
+    if (!answer) return nil;
+    if ([answer[@"error"] isKindOfClass:NSString.class]) {
+        NSString *code = answer[@"code"];
+        if (error) *error = DBError(answer[@"error"], [code isEqual:@"interrupted"] ? @"57014" : [code isEqual:@"readonly"] ? @"25006" : nil);
+        return nil;
+    }
+    DBResult *result = [DBResult new];
+    result.columns = answer[@"columns"];
+    NSMutableArray *rows = [NSMutableArray new];
+    for (NSArray *row in answer[@"rows"]) {
+        NSMutableArray *values = [NSMutableArray arrayWithCapacity:row.count];
+        for (id v in row) [values addObject:RemoteValue(v)];
+        [rows addObject:values];
+    }
+    result.rows = rows;
+    result.affected = [answer[@"affected"] integerValue];
+    return result;
+}
+
+// Lifts or restores read-only around a confirmed write; on a server the helper does it (and guards the rest).
+- (void)setQueryOnly:(BOOL)on {
+    if (_remote) [_remote send:@{@"op": @"writable", @"on": @(!on)} error:NULL];
+    else [self execute:on ? @"PRAGMA query_only = ON" : @"PRAGMA query_only = OFF" params:nil error:NULL];
 }
 
 // Runs the statements one after another; the result is the last one that returned columns (or the last
 // statement, if none did). $1, $2 … are bound by name: SQLite numbers parameters in order of first
 // appearance, so `IN ($2, $3) AND … $1` would bind wrongly by position.
 - (DBResult *)execute:(NSString *)sql params:(NSArray *)params error:(NSError **)error {
+    if (_remote) return [self remoteExecute:sql params:params error:error];
     if (!_db) {
         if (error) *error = DBError(L(@"Not connected to the database."), nil);
         return nil;
@@ -260,14 +347,14 @@ static int Progress(void *context) {
 }
 
 - (DBResult *)inWriteTransaction:(DBResult *(^)(NSError **))work error:(NSError **)error {
-    if (_readOnly) [self execute:@"PRAGMA query_only = OFF" params:nil error:NULL];
+    if (_readOnly) [self setQueryOnly:NO];
     DBResult *r = nil;
     if ([self execute:@"BEGIN" params:nil error:error]) {
         r = work(error);
         if (r && ![self execute:@"COMMIT" params:nil error:error]) r = nil;
         if (!r) [self execute:@"ROLLBACK" params:nil error:NULL];
     }
-    if (_readOnly) [self execute:@"PRAGMA query_only = ON" params:nil error:NULL];
+    if (_readOnly) [self setQueryOnly:YES];
     return r;
 }
 
@@ -303,7 +390,7 @@ static int Progress(void *context) {
 
 - (DBResult *)tables:(NSError **)error {
     return [self execute:@"SELECT 'main', name, CASE type WHEN 'view' THEN 'view' ELSE 'table' END, NULL"
-                          " FROM sqlite_schema WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name"
+                          " FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name"
                   params:nil error:error];
 }
 
@@ -317,31 +404,53 @@ static int Progress(void *context) {
     return info;
 }
 
-// Single-column keys only; a key without a target column points at the other table's primary key.
 - (DBResult *)foreignKeysInSchema:(NSString *)schema table:(NSString *)table error:(NSError **)error {
-    DBResult *list = [self execute:@"SELECT id, \"from\", \"table\", \"to\" FROM pragma_foreign_key_list($1) ORDER BY id, seq" params:@[table] error:error];
-    if (!list) return nil;
-    NSCountedSet *parts = [NSCountedSet new];
-    for (NSArray *k in list.rows) [parts addObject:k[0]];
+    NSArray *keys = [self keysOfTable:table error:error];
+    if (!keys) return nil;
     NSMutableArray *rows = [NSMutableArray new];
-    for (NSArray *k in list.rows) {
-        if ([parts countForObject:k[0]] != 1) continue;
-        id to = k[3];
-        if (to == NSNull.null) {
-            DBResult *pk = [self execute:@"SELECT name FROM pragma_table_info($1) WHERE pk = 1" params:@[k[2]] error:NULL];
-            if (pk.rows.count != 1) continue;
-            to = pk.rows[0][0];
-        }
-        [rows addObject:@[k[1], @"main", k[2], to]];
-    }
-    NSMutableSet *keyed = [NSMutableSet new];
-    for (NSArray *k in rows) [keyed addObject:k[0]];
-    for (NSArray *r in [self pocketBaseRelations]) // single PocketBase relations work like foreign keys
-        if ([r[0] isEqual:table] && ![r[3] isEqual:@"many"] && ![keyed containsObject:r[1]])
-            [rows addObject:@[r[1], @"main", r[2], @"id"]];
+    for (NSArray *k in keys) [rows addObject:@[k[1], @"main", k[2], k[3]]];
+    DBResult *list = [DBResult new];
     list.columns = @[@"column", @"schema", @"table", @"referenced"];
     list.rows = rows;
     return list;
+}
+
+// Single-column keys of one table, or of every table (nil): rows [table, column, referenced table, referenced
+// column]. A key without a target column points at the other table's primary key. One query for all tables, so
+// a database on a server doesn't cost a round trip per table.
+- (NSArray<NSArray *> *)keysOfTable:(NSString *)table error:(NSError **)error {
+    DBResult *list = [self execute:@"SELECT m.name, f.id, f.\"from\", f.\"table\", f.\"to\" FROM sqlite_master m JOIN pragma_foreign_key_list(m.name) f"
+                                    " WHERE m.type = 'table' AND ($1 IS NULL OR m.name = $1) ORDER BY m.name, f.id, f.seq"
+                            params:@[table ?: NSNull.null] error:error];
+    if (!list) return nil;
+    NSCountedSet *parts = [NSCountedSet new];
+    for (NSArray *k in list.rows) [parts addObject:@[k[0], k[1]]];
+    NSDictionary *primaryKeys = nil; // looked up only when a key needs it
+    NSMutableArray *rows = [NSMutableArray new];
+    NSMutableSet *keyed = [NSMutableSet new];
+    for (NSArray *k in list.rows) {
+        if ([parts countForObject:@[k[0], k[1]]] != 1) continue;
+        id to = k[4];
+        if (to == NSNull.null) {
+            if (!primaryKeys) primaryKeys = [self primaryKeys];
+            if (!(to = primaryKeys[[k[3] lowercaseString]])) continue;
+        }
+        [rows addObject:@[k[0], k[2], k[3], to]];
+        [keyed addObject:@[k[0], k[2]]];
+    }
+    for (NSArray *r in [self pocketBaseRelations]) // single PocketBase relations work like foreign keys
+        if ((!table || [r[0] isEqual:table]) && ![r[3] isEqual:@"many"] && ![keyed containsObject:@[r[0], r[1]]])
+            [rows addObject:@[r[0], r[1], r[2], @"id"]];
+    return rows;
+}
+
+// Lower-cased table name → its primary key column (the first one of a composite key), for REFERENCES without a column.
+- (NSDictionary<NSString *, NSString *> *)primaryKeys {
+    DBResult *pk = [self execute:@"SELECT m.name, p.name FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type = 'table' AND p.pk = 1"
+                          params:nil error:NULL];
+    NSMutableDictionary *keys = [NSMutableDictionary new];
+    for (NSArray *r in pk.rows) keys[[r[0] lowercaseString]] = r[1];
+    return keys;
 }
 
 #pragma mark - PocketBase
@@ -373,7 +482,7 @@ static int Progress(void *context) {
 }
 
 - (DBResult *)indexesInSchema:(NSString *)schema table:(NSString *)table error:(NSError **)error {
-    DBResult *list = [self execute:@"SELECT name, sql, \"unique\" FROM pragma_index_list($1) JOIN sqlite_schema USING (name) ORDER BY name"
+    DBResult *list = [self execute:@"SELECT name, sql, \"unique\" FROM pragma_index_list($1) JOIN sqlite_master USING (name) ORDER BY name"
                             params:@[table] error:error];
     if (!list) return nil;
     NSMutableArray *rows = [NSMutableArray new];
@@ -393,33 +502,25 @@ static int Progress(void *context) {
     return list;
 }
 
-// A local file: one PRAGMA per table is fast enough.
+// One query for the whole database, which matters over ssh.
 - (DBResult *)allColumns:(NSError **)error {
-    NSMutableArray *rows = [NSMutableArray new];
-    DBResult *tables = [self tables:error];
-    for (NSArray *t in tables.rows) {
-        if (![t[2] isEqual:@"table"]) continue;
-        for (NSArray *c in [self columnsInSchema:t[0] table:t[1] error:NULL].rows) [rows addObject:@[t[0], t[1], c[0], c[1], c[4]]];
-    }
-    DBResult *all = [DBResult new];
-    all.columns = @[@"schema", @"table", @"column", @"type", @"pk"];
-    all.rows = rows;
-    return tables ? all : nil;
+    return [self execute:@"SELECT 'main', m.name, p.name, p.type, CASE WHEN p.pk > 0 THEN 'PK' ELSE '' END"
+                          " FROM sqlite_master m JOIN pragma_table_info(m.name) p"
+                          " WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY m.name, p.cid"
+                  params:nil error:error];
 }
 
 - (DBResult *)allForeignKeys:(NSError **)error {
+    NSArray *keys = [self keysOfTable:nil error:error];
+    if (!keys) return nil;
     NSMutableArray *rows = [NSMutableArray new];
-    DBResult *tables = [self tables:error];
-    for (NSArray *t in tables.rows) {
-        if (![t[2] isEqual:@"table"]) continue;
-        for (NSArray *k in [self foreignKeysInSchema:t[0] table:t[1] error:NULL].rows) [rows addObject:@[t[0], t[1], k[0], k[1], k[2], k[3], @""]];
-    }
+    for (NSArray *k in keys) [rows addObject:@[@"main", k[0], k[1], @"main", k[2], k[3], @""]];
     for (NSArray *r in [self pocketBaseRelations]) // multi relations: only on the diagram
         if ([r[3] isEqual:@"many"]) [rows addObject:@[@"main", r[0], r[1], @"main", r[2], @"id", @"many"]];
     DBResult *all = [DBResult new];
     all.columns = @[@"schema", @"table", @"column", @"referenced schema", @"referenced table", @"referenced column", @"many"];
     all.rows = rows;
-    return tables ? all : nil;
+    return all;
 }
 
 - (DBResult *)databases:(NSError **)error {

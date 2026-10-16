@@ -12,6 +12,10 @@ NSString *TBConnectionIdentity(NSDictionary *info) {
     return [NSString stringWithFormat:@"%@/%@", info[@"id"] ?: @"", info[@"database"] ?: @""];
 }
 
+BOOL TBIsSQLite(NSDictionary *info) {
+    return [info[@"kind"] isEqual:@"sqlite"] || [info[@"kind"] isEqual:@"sqlite-ssh"];
+}
+
 BOOL TBConnectionStillUsed(NSArray *connectionsOfOtherWindows, id connection) {
     for (id c in connectionsOfOtherWindows)
         if (c == connection) return YES;
