@@ -1,7 +1,7 @@
 #import "DiagramView.h"
 #import "UI.h"
 
-static const CGFloat Margin = 40;
+static const CGFloat Margin = 24; // as SchemaLayout's
 
 static BOOL IsDefaultSchema(NSString *schema) {
     return [schema isEqual:@"public"] || [schema isEqual:@"main"];
@@ -100,7 +100,7 @@ static CGFloat RowY(SchemaTable *t, NSString *column) {
         CGFloat dash[] = {5, 4};
         [path setLineDash:dash count:2 phase:0];
     }
-    NSColor *color = lit ? NSColor.controlAccentColor : NSColor.tertiaryLabelColor;
+    NSColor *color = lit ? NSColor.controlAccentColor : Theme.text3;
     [color setStroke];
     [path stroke];
     // a dot at the key column, an arrow head at the referenced table
@@ -118,7 +118,7 @@ static CGFloat RowY(SchemaTable *t, NSString *column) {
     NSRect box = t.frame;
     BOOL selected = t == _selected;
     NSBezierPath *outline = [NSBezierPath bezierPathWithRoundedRect:box xRadius:8 yRadius:8];
-    [NSColor.textBackgroundColor setFill];
+    [Theme.box setFill];
     [outline fill];
 
     // header
@@ -133,7 +133,7 @@ static CGFloat RowY(SchemaTable *t, NSString *column) {
     NSMutableAttributedString *title = [NSMutableAttributedString new];
     if (!IsDefaultSchema(t.schema))
         [title appendAttributedString:[[NSAttributedString alloc] initWithString:[t.schema stringByAppendingString:@"."] attributes:@{
-            NSFontAttributeName: [NSFont monospacedSystemFontOfSize:12.5 weight:NSFontWeightRegular], NSForegroundColorAttributeName: NSColor.tertiaryLabelColor}]];
+            NSFontAttributeName: [NSFont monospacedSystemFontOfSize:12.5 weight:NSFontWeightRegular], NSForegroundColorAttributeName: Theme.text3}]];
     [title appendAttributedString:[[NSAttributedString alloc] initWithString:t.name attributes:@{
         NSFontAttributeName: [NSFont monospacedSystemFontOfSize:12.5 weight:NSFontWeightSemibold], NSForegroundColorAttributeName: NSColor.labelColor}]];
     [title drawWithRect:NSMakeRect(NSMinX(box) + 10, NSMinY(box) + 7, NSWidth(box) - 20, 17)
@@ -146,9 +146,9 @@ static CGFloat RowY(SchemaTable *t, NSString *column) {
         right.alignment = NSTextAlignmentRight;
         right.lineBreakMode = NSLineBreakByTruncatingTail;
         nameAttrs = @{NSFontAttributeName: [Theme mono:11.5], NSForegroundColorAttributeName: NSColor.labelColor};
-        typeAttrs = @{NSFontAttributeName: [NSFont systemFontOfSize:10.5], NSForegroundColorAttributeName: NSColor.tertiaryLabelColor,
+        typeAttrs = @{NSFontAttributeName: [NSFont systemFontOfSize:10.5], NSForegroundColorAttributeName: Theme.text3,
                       NSParagraphStyleAttributeName: right};
-        moreAttrs = @{NSFontAttributeName: [NSFont systemFontOfSize:11], NSForegroundColorAttributeName: NSColor.tertiaryLabelColor};
+        moreAttrs = @{NSFontAttributeName: [NSFont systemFontOfSize:11], NSForegroundColorAttributeName: Theme.text3};
         pkAttrs = @{NSFontAttributeName: [NSFont systemFontOfSize:9 weight:NSFontWeightBold], NSForegroundColorAttributeName: Theme.orange};
         fkAttrs = @{NSFontAttributeName: [NSFont systemFontOfSize:9 weight:NSFontWeightBold], NSForegroundColorAttributeName: NSColor.controlAccentColor};
     }

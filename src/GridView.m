@@ -1,5 +1,6 @@
 #import "GridView.h"
 #import "DatePicker.h"
+#import "FileRefs.h"
 #import "ImageValue.h"
 #import "JSONInspector.h"
 #import "UI.h"
@@ -222,6 +223,7 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
         _defaultColumns = [NSIndexSet new];
         _numericColumns = [NSIndexSet new];
         _referenceColumns = [NSIndexSet new];
+        _fileColumns = [NSIndexSet new];
         _columnKinds = @{};
         _columnColors = @{};
         _nullText = @"NULL";
@@ -523,6 +525,7 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
     NSRect badge = NSInsetRect(view.badgeRect, -3, -4); // a little slack around the 15 pt badge
     if (view.badge && NSPointInRect([view convertPoint:click fromView:_table], badge)) {
         if ([self hasReferenceAtRow:row column:col] && _onOpenReference) return _onOpenReference(row, col, cell);
+        if ([self hasFileValue:[self valueAtRow:row column:col] column:col]) return _onOpenFile(row, col, cell);
         if (_onOpenImage && ImageValueDetected([self valueAtRow:row column:col])) return _onOpenImage(row, col, cell);
     }
     if (_onSelectCell) _onSelectCell(row, col);
@@ -551,6 +554,22 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
 
 - (NSRect)cellRectForRow:(NSInteger)row column:(NSInteger)col {
     return [_table frameOfCellAtColumn:[self tableColumn:col] row:row];
+}
+
+- (void)setFileColumns:(NSIndexSet *)fileColumns {
+    _fileColumns = [fileColumns copy];
+    [_table reloadData];
+}
+
+- (void)setDetectsFileKeys:(BOOL)detectsFileKeys {
+    _detectsFileKeys = detectsFileKeys;
+    [_table reloadData];
+}
+
+- (BOOL)hasFileValue:(id)value column:(NSInteger)col {
+    if (!_onOpenFile || ![value isKindOfClass:NSString.class] || ![value length]) return NO;
+    if ([_fileColumns containsIndex:col]) return ![value isEqual:@"[]"]; // a multi file field without files
+    return _detectsFileKeys && FileKeysInValue(value).count > 0;
 }
 
 - (BOOL)hasReferenceAtRow:(NSInteger)row column:(NSInteger)col {
@@ -798,7 +817,7 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
     cell.checkbox = !isBool ? CellCheckboxNone : IsTrue(value) ? CellCheckboxOn : CellCheckboxOff;
     cell.badge = placeholder ? CellBadgeNone
                : [_referenceColumns containsIndex:col] ? CellBadgeReference
-               : _onOpenImage && ImageValueDetected(value) ? CellBadgeImage : CellBadgeNone;
+               : [self hasFileValue:value column:col] || (_onOpenImage && ImageValueDetected(value)) ? CellBadgeImage : CellBadgeNone;
     return cell;
 }
 

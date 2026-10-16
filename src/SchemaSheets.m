@@ -27,6 +27,8 @@ typedef NS_ENUM(NSInteger, SheetKind) { SheetAddColumn, SheetAddForeignKey };
     sheet->_name = [self field:@""];
     sheet->_type = [NSComboBox new];
     [sheet->_type addItemsWithObjectValues:types];
+    for (NSString *t in types) // the design opens with text, the type most new columns get
+        if ([t caseInsensitiveCompare:@"text"] == NSOrderedSame) sheet->_type.stringValue = t;
     sheet->_type.completes = YES;
     sheet->_type.delegate = sheet;
     sheet->_notNull = [NSButton checkboxWithTitle:@"NOT NULL" target:sheet action:@selector(changed:)];
@@ -51,6 +53,7 @@ typedef NS_ENUM(NSInteger, SheetKind) { SheetAddColumn, SheetAddForeignKey };
     sheet->_refTable = [self popup:sheet];
     for (SchemaTable *t in sheet->_tables) [sheet->_refTable addItemWithTitle:t.qualifiedName];
     sheet->_refColumn = [self popup:sheet];
+    for (NSPopUpButton *p in @[sheet->_column, sheet->_refTable, sheet->_refColumn]) p.font = [Theme mono:12]; // names, as in the design
     sheet->_onDelete = [self popup:sheet];
     [sheet->_onDelete addItemsWithTitles:@[L(@"No Action"), @"CASCADE", @"SET NULL"]];
     [sheet buildWithTitle:[NSString stringWithFormat:L(@"Add a foreign key to %@"), table.name] rows:@[
@@ -78,7 +81,7 @@ typedef NS_ENUM(NSInteger, SheetKind) { SheetAddColumn, SheetAddForeignKey };
 }
 
 - (instancetype)initWithKind:(SheetKind)kind table:(SchemaTable *)table {
-    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 480, 300) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 500, 300) styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     if ((self = [super initWithWindow:window])) {
         _kind = kind;
         _table = table;
@@ -99,32 +102,32 @@ typedef NS_ENUM(NSInteger, SheetKind) { SheetAddColumn, SheetAddForeignKey };
     NSTextField *sqlLabel = TBLabel(L(@"This SQL will run:"), 11, NSFontWeightSemibold, NSColor.secondaryLabelColor);
     _preview = TBWrappingLabel(@"", 12, NSColor.labelColor);
     _preview.font = [Theme mono:12];
-    _preview.preferredMaxLayoutWidth = 420;
-    NSBox *box = TBPanel(Theme.editor);
-    box.cornerRadius = 6;
+    _preview.preferredMaxLayoutWidth = 432;
+    NSBox *box = TBPanel(Theme.editor); // design: radius 10, 9 × 12 padding, 17 pt lines
+    box.cornerRadius = 10;
     box.borderWidth = 1;
     box.borderColor = NSColor.separatorColor;
     box.boxType = NSBoxCustom;
-    TBPin(_preview, box.contentView, NSEdgeInsetsMake(8, 10, 8, 10));
+    TBPin(_preview, box.contentView, NSEdgeInsetsMake(9, 12, 9, 12));
     _error = TBWrappingLabel(@"", 12, Theme.red);
-    _error.preferredMaxLayoutWidth = 420;
+    _error.preferredMaxLayoutWidth = 456;
     _error.hidden = YES;
     NSTextField *note = TBWrappingLabel(L(@"Production: this changes the schema of the production database."), 12, Theme.red);
-    note.preferredMaxLayoutWidth = 420;
+    note.preferredMaxLayoutWidth = 456;
     note.hidden = !production;
 
     _spinner = TBSpinner(NSControlSizeSmall);
     _cancel = TBButton(L(@"Cancel"), self, @selector(cancel:));
     _cancel.keyEquivalent = @"\e";
-    _run = TBButton(L(@"Run"), self, @selector(run:));
+    _run = TBButton(L(@"Execute"), self, @selector(run:));
     _run.keyEquivalent = @"\r";
     NSStackView *buttons = TBBar(@[_spinner], @[_cancel, _run], 28);
     buttons.edgeInsets = NSEdgeInsetsMake(0, 0, 0, 0);
 
-    NSStackView *content = TBColumnInset(@[heading, grid, sqlLabel, box, _error, note, buttons], nil, NSEdgeInsetsMake(20, 20, 20, 20));
+    NSStackView *content = TBColumnInset(@[heading, grid, sqlLabel, box, _error, note, buttons], nil, NSEdgeInsetsMake(22, 22, 22, 22));
     content.spacing = 12;
     [content setCustomSpacing:4 afterView:sqlLabel];
-    [content.widthAnchor constraintEqualToConstant:480].active = YES;
+    [content.widthAnchor constraintEqualToConstant:500].active = YES;
     self.window.contentView = content;
     [self changed:nil];
 }
@@ -147,8 +150,11 @@ typedef NS_ENUM(NSInteger, SheetKind) { SheetAddColumn, SheetAddForeignKey };
 - (void)changed:(id)sender {
     if (sender && sender == _refTable) [self referencedTableChanged]; // (both nil in the Add Column sheet)
     NSString *sql = self.sql;
-    _preview.stringValue = sql ?: L(@"Fill in the fields above.");
-    _preview.textColor = sql ? NSColor.labelColor : NSColor.tertiaryLabelColor;
+    NSMutableParagraphStyle *lines = [NSMutableParagraphStyle new];
+    lines.minimumLineHeight = lines.maximumLineHeight = 17;
+    _preview.attributedStringValue = [[NSAttributedString alloc] initWithString:sql ?: L(@"Fill in the fields above.") attributes:@{
+        NSFontAttributeName: [Theme mono:12], NSParagraphStyleAttributeName: lines,
+        NSForegroundColorAttributeName: sql ? NSColor.labelColor : Theme.text3}];
     _run.enabled = sql != nil;
     _error.hidden = YES;
 }

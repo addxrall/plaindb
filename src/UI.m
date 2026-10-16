@@ -36,6 +36,9 @@ static NSColor *Dynamic(uint32_t light, uint32_t dark) {
 + (NSColor *)sqlNumber { return Dynamic(0x2e4bd6ff, 0xd9c97cff); }
 + (NSColor *)sqlFunction { return Dynamic(0x3a6f8fff, 0x6bdfffff); }
 + (NSColor *)sqlComment { return Dynamic(0x8a8a8eff, 0x7f8c98ff); }
++ (NSColor *)text2 { return Dynamic(0x6c6c72ff, 0xa0a0a6ff); }
++ (NSColor *)text3 { return Dynamic(0xa3a3a8ff, 0x6e6e74ff); }
++ (NSColor *)box { return Dynamic(0xffffffff, 0x232326ff); }
 
 + (NSFont *)mono:(CGFloat)size {
     return [NSFont monospacedSystemFontOfSize:size weight:NSFontWeightRegular];

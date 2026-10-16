@@ -27,7 +27,8 @@
 | `src/SQLText.m` | SQL text view: highlighting, line number ruler |
 | `src/ReferencePopover.m` | foreign key popovers: referenced row preview and the row picker |
 | `src/DatePicker.m` | column kinds (bool, date, time, timestamp, timestamptz), Postgres date text ↔ `NSDate`, the date picker popover with its own month view (`CalendarView`) |
-| `src/ImageValue.m` | image detection and decoding for cell values, and the image preview popover |
+| `src/ImageValue.m` | image detection and decoding for cell values, and the preview popover (images; for files also PDFs through PDFKit and Save As…) |
+| `src/FileRefs.m` | files kept elsewhere: which values are file keys (also Postgres arrays and JSON lists), S3 locations, PocketBase file names, what bytes are, and downloading with the `aws` CLI |
 | `src/SchemaGraph.m` | the diagram's model and layout, without AppKit: tables, foreign key edges, `SchemaLayout` (ranks by references, ordering by neighbours, saved positions, neighbours mode) |
 | `src/SchemaSheets.m` | "Add Column…" / "Add Foreign Key…" sheets: form, live SQL preview, database errors in place |
 | `src/DiagramView.m` | draws the diagram (boxes, arrows) and handles selection, dragging, panning (background or middle button), the box menu, zoom keys and ⌘-wheel zoom |
@@ -46,6 +47,7 @@
 | `tests/json_test.m` | JSON helpers: formatting keeps key order and string contents, parse tree |
 | `tests/store_test.m` | window frame colour rules, including older saved connections |
 | `tests/image_test.m` | image detection and decoding (bytea hex, base64, data URI) |
+| `tests/file_test.m` | file keys in values, S3 locations, PocketBase names, data kinds, the aws download with a fake `aws` script |
 | `tests/date_test.m` | type → kind mapping and date/time round trips, time zones, DST |
 | `tests/check_strings.py` | every `L()`/`LN()` key is translated, with matching format specifiers |
 | `tests/perf_grid.m` | `make perf`: scroll timing, CPU and memory of the grid on a big page; fails above the 120 Hz frame budget |
@@ -68,6 +70,8 @@ The connection window is an `NSSplitViewController` (sidebar + content) in a ful
 **Files.** An SQLite file is a connection dictionary like any other (`kind = sqlite`, `path`, `name`, `production` = read-only, `frame`); `TBConnect` opens a `SQLiteConnection` for it. ⌘O, Finder's "Open With", the Files tab and dropped files all go through `AppDelegate openFileAtPath:`, and opening a window remembers the file in the recent list.
 
 **SQLite on a server.** A saved connection with `kind = sqlite-ssh` (`sshHost`, `path`, `database` = the path). `TBConnect` creates `SQLiteConnection initWithSSHHost:path:readOnly:`, whose `RemoteSQLite` launches `/usr/bin/ssh … -- <host> python3 -I -u -c '<bootstrap>'`; the bootstrap reads the helper (base64) from the first line of stdin and runs it, the second line is `{"path", "readonly"}`. The helper opens the file (`mode=rw`, never creating it), prints a hello, then answers `execute` and `writable` requests, one JSON line each, values tagged (`{"i"}`, `{"r"}`, `{"b"}`, text, null) so storage classes survive. Lines before the hello (a shell banner) are skipped; after it, an answer without the request's id closes the session. If the helper dies, the request in flight fails and the next one starts a new session. See DECISIONS.md for the safety rules.
+
+**Files.** `GridView` shows 🖼 on `fileColumns` (PocketBase file fields, from `pocketBaseFilesOfTable:`) and, with `detectsFileKeys` (the connection has `s3Bucket`), on values `FileKeysInValue` accepts. A click calls `MainWindowController openFileInGrid:`, which offers a menu when a value holds several files and builds an `ImagePreview` with a loader: `FileS3Fetch` (the connection's bucket, region and `awsProfile`, or PocketBase's S3 settings read from `_params` without its keys, object key `<collection>/<record>/<name>`), or `pocketBaseFileInCollection:…` on the connection's queue (a local read, or the helper's `file` request over SSH; names checked, path kept inside `storage`).
 
 **Values.** Everything is text (`NSString`) or `NSNull`. Postgres params go through `PQexecParams` as untyped text, and Postgres infers the type from the column. SQLite has no such inference for columns without a declared type, so its integers, reals and BLOBs come back as an `NSString` subclass that remembers the storage class and is bound back with it; an edited cell takes the class of the value it replaces (`valueForText:replacing:`). Several statements in one SQLite `execute` run inside a savepoint, all or nothing like one `PQexec`, unless the script manages transactions itself.
 

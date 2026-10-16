@@ -53,6 +53,15 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) NSArray<NSString *> *commonTypes;
 // How the engine prints booleans, and what the grid writes back.
 @property (nonatomic, readonly) NSString *booleanTrue, *booleanFalse;
+
+@optional
+// PocketBase files of a table: @{collection: its id, columns: {name: @(several files)}, s3: {bucket, region,
+// endpoint}}, with "s3" only when PocketBase keeps files in S3 (never its access keys); nil without file fields.
+- (nullable NSDictionary *)pocketBaseFilesOfTable:(NSString *)table;
+// A file from PocketBase's own storage, pb_data/storage/<collection>/<record>/<name> next to the database (on the
+// server for a remote one); names are checked so the path can't leave that folder. At most maxBytes.
+- (nullable NSData *)pocketBaseFileInCollection:(NSString *)collection record:(NSString *)record name:(NSString *)name
+                                       maxBytes:(NSUInteger)maxBytes error:(NSError **)error;
 @end
 
 // LIKE pattern finding `term` anywhere, with %, _ and \ in it matched literally.

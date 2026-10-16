@@ -11,6 +11,22 @@
 **Context:** connecting to the production Postgres matters most.
 **Decision:** v0.1 supported Postgres only. The `DBConnection` protocol left room for a `SQLiteConnection`, which came next (see "SQLite files").
 
+## 2026-10-16 · File previews from S3 and PocketBase storage
+
+**Context:** rows point to files kept elsewhere: fleet's Postgres stores PocketBase-style S3 keys (`pbc_…/<record>/<name>`, a `text[]` of them for several photos), PocketBase file fields hold bare names, the objects live in S3 or `pb_data/storage`.
+**Decision:** a 🖼 badge on PocketBase file fields and, when a connection has an S3 bucket, on values that look like file keys (a `/`, a known extension, no surrounding whitespace; arrays and JSON lists all-or-nothing). Downloads go through the user's `aws` CLI and profile into memory: no AWS secrets in PlainDB, SSO works, no temporary files; PocketBase's own S3 access keys in `_params` are never read. Without S3, PocketBase storage is read next to the database or by the SSH helper, names restricted to PocketBase's alphabet and the resolved path kept inside `storage`. Images and PDFs preview in the existing popover; other files can be saved where the user chooses.
+**Not included:** files the application encrypted itself (fleet's `files.file_key_encrypted`), uploads, other clouds, presigned URLs.
+**Design:** the S3 row in the connection form and the file popover have no design yet; they reuse the form's field style and the image popover.
+
+## 2026-10-16 · Design sections 7 and 8
+
+**Decision:** follow the new design for the diagram (220 pt boxes, 34 pt gaps, neighbours top-aligned, "‹ Cała baza", Reset Layout in neighbours mode too, box and secondary-ink tokens `Theme.box` / `text3`), the schema sheets, SQL completion (geometry, "⌃Space: suggestions" hint, ←/→ close the list), tabs ("+" and ⌘T through `newWindowForTab:`, tab tooltips, "⌘-click" hint), the Files tab (inset card, drop overlay, footer, "Frame Colour" submenu, missing files in red), the connection button (24 pt icon) and the SQLite-over-SSH form.
+**Choices made with the user:**
+- Sheet SQL is laid out as in the design (one clause per line, `;`), but keeps quoted, schema-qualified names and the explicit constraint name, so any name works and the statement says exactly what runs.
+- The Files tab keeps opening a file on a single click (the design selects first).
+- A table picked in the sidebar while the Diagram is shown opens its data, as in the design.
+- Frame colours stay as they are (they match the connection form's design); the Files design's slightly different hexes weren't taken.
+
 ## 2026-10-16 · SQLite on a server, over SSH (production PocketBase)
 
 **Context:** the user wants to browse and sometimes fix data in a production PocketBase (`pb_data/data.db`) on servers they reach over SSH, PocketBase running as a binary on some and in Docker on others. An SQLite file has no port to tunnel to; SSHFS and other network file systems break SQLite's locking next to a running PocketBase; the `sqlite3` CLI prints no column names for an empty result and would need params pasted into SQL.

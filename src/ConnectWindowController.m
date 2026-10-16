@@ -75,15 +75,66 @@ static NSString *HexFromColor(NSColor *color) {
 }
 @end
 
+// Shown while files are dragged over the window, as in the design: an accent ring inside the window's edge, a light
+// accent tint and a "Drop to open" pill in the middle.
+@interface DropOverlay : NSView
+@end
+
+@implementation DropOverlay
+- (NSView *)hitTest:(NSPoint)point {
+    return nil; // only a picture: the drag still goes to the window
+}
+
+- (void)drawRect:(NSRect)dirtyRect {
+    NSColor *accent = NSColor.controlAccentColor;
+    BOOL dark = [self.effectiveAppearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]] == NSAppearanceNameDarkAqua;
+    NSBezierPath *ring = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 1.5, 1.5) xRadius:10 yRadius:10];
+    [[accent colorWithAlphaComponent:dark ? 0.1 : 0.06] setFill];
+    [ring fill];
+    ring.lineWidth = 3;
+    [accent setStroke];
+    [ring stroke];
+    NSAttributedString *text = [[NSAttributedString alloc] initWithString:L(@"Drop to open") attributes:@{
+        NSFontAttributeName: [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold], NSForegroundColorAttributeName: NSColor.whiteColor}];
+    NSSize size = text.size;
+    NSRect pill = NSMakeRect(round(NSMidX(self.bounds) - size.width / 2 - 14), round(NSMidY(self.bounds) - size.height / 2 - 8), size.width + 28, size.height + 16);
+    [accent setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:pill xRadius:8 yRadius:8] fill];
+    [text drawAtPoint:NSMakePoint(NSMinX(pill) + 14, NSMinY(pill) + 8)];
+}
+@end
+
 // Accepts files dragged onto the window.
 @interface FileDropView : NSView
 @property (nonatomic, copy) void (^onDrop)(NSArray<NSString *> *paths);
 @end
 
-@implementation FileDropView
+@implementation FileDropView {
+    DropOverlay *_overlay;
+}
+
 - (instancetype)initWithFrame:(NSRect)frame {
     if ((self = [super initWithFrame:frame])) [self registerForDraggedTypes:@[NSPasteboardTypeFileURL]];
     return self;
+}
+
+- (void)setDropHighlighted:(BOOL)on {
+    if (on && !_overlay) {
+        _overlay = [[DropOverlay alloc] initWithFrame:self.bounds];
+        _overlay.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+        [self addSubview:_overlay positioned:NSWindowAbove relativeTo:nil];
+    } else if (!on) {
+        [_overlay removeFromSuperview];
+        _overlay = nil;
+    }
+}
+
+- (void)draggingExited:(id<NSDraggingInfo>)info {
+    [self setDropHighlighted:NO];
+}
+
+- (void)draggingEnded:(id<NSDraggingInfo>)info {
+    [self setDropHighlighted:NO];
 }
 
 - (NSArray<NSString *> *)pathsIn:(id<NSDraggingInfo>)info {
@@ -94,10 +145,13 @@ static NSString *HexFromColor(NSColor *color) {
 }
 
 - (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)info {
-    return [self pathsIn:info].count ? NSDragOperationCopy : NSDragOperationNone;
+    BOOL files = [self pathsIn:info].count > 0;
+    [self setDropHighlighted:files];
+    return files ? NSDragOperationCopy : NSDragOperationNone;
 }
 
 - (BOOL)performDragOperation:(id<NSDraggingInfo>)info {
+    [self setDropHighlighted:NO];
     NSArray *paths = [self pathsIn:info];
     if (paths.count && self.onDrop) self.onDrop(paths);
     return paths.count > 0;
@@ -115,6 +169,9 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
         @[@"database", L(@"Database:"), @"postgres"],
         @[@"sshHost", L(@"SSH tunnel:"), L(@"user@server or alias")],
         @[@"path", L(@"File on server:"), @"/home/pocketbase/pb_data/data.db"],
+        @[@"s3Bucket", L(@"S3 files:"), L(@"bucket")],
+        @[@"s3Region", L(@"Region:"), @"eu-central-1"],
+        @[@"awsProfile", L(@"Profile:"), L(@"AWS profile")],
     ];
 }
 
@@ -146,7 +203,6 @@ static BOOL IsRemoteSQLite(NSDictionary *c) {
     // recent SQLite files
     NSTableView *_files;
     NSArray<NSDictionary *> *_recent;
-    NSTextField *_filesEmpty;
     // local databases
     NSView *_tilesView;
     NSArray<NSString *> *_localNames;
@@ -155,7 +211,7 @@ static BOOL IsRemoteSQLite(NSDictionary *c) {
 }
 
 - (instancetype)init {
-    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 700, 420)
+    NSWindow *window = [[NSWindow alloc] initWithContentRect:NSMakeRect(0, 0, 700, 460) // design: 460 pt high
                                                    styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
                                                              NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskFullSizeContentView
                                                      backing:NSBackingStoreBuffered
@@ -271,10 +327,17 @@ static BOOL IsRemoteSQLite(NSDictionary *c) {
     pathHint.preferredMaxLayoutWidth = 340;
     NSStackView *pathColumn = TBColumn(@[_fields[@"path"], pathHint], nil);
     pathColumn.spacing = 4;
+    // where the files that rows point to live: previews through the user's aws CLI and profile
+    [_fields[@"s3Region"].widthAnchor constraintEqualToConstant:104].active = YES;
+    [_fields[@"awsProfile"].widthAnchor constraintEqualToConstant:96].active = YES;
+    NSStackView *s3Row = [NSStackView stackViewWithViews:@[_fields[@"s3Bucket"], _fields[@"s3Region"], _fields[@"awsProfile"]]];
+    s3Row.spacing = 8;
+    _fields[@"s3Region"].toolTip = L(@"Region:");
+    _fields[@"awsProfile"].toolTip = L(@"AWS profile from ~/.aws/config; empty: the default one.");
     _kindSwitch = [NSSegmentedControl segmentedControlWithLabels:@[L(@"PostgreSQL"), L(@"SQLite over SSH")]
                                                     trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(kindChanged:)];
-    _kindSwitch.controlSize = NSControlSizeSmall;
-    _kindSwitch.font = [NSFont systemFontOfSize:NSFont.smallSystemFontSize];
+    _kindSwitch.font = [NSFont systemFontOfSize:12]; // design: 28 pt high, 12 pt labels
+    _fields[@"path"].font = [NSFont monospacedSystemFontOfSize:12 weight:NSFontWeightRegular]; // a path, like code
     _production = [NSButton checkboxWithTitle:L(@"Production: read-only, writes need confirmation") target:self action:@selector(productionToggled:)];
 
     NSMutableArray *swatches = [NSMutableArray new];
@@ -309,6 +372,7 @@ static BOOL IsRemoteSQLite(NSDictionary *c) {
         @[labels[@"database"], _fields[@"database"]],
         @[labels[@"sshHost"], sshColumn],
         @[labels[@"path"], pathColumn],
+        @[labels[@"s3Bucket"], s3Row],
         @[NSGridCell.emptyContentView, _production],
         @[[NSTextField labelWithString:L(@"Window frame:")], swatchRow],
     ]];
@@ -405,13 +469,19 @@ static BOOL IsRemoteSQLite(NSDictionary *c) {
 - (NSView *)buildFilesView {
     NSTextField *title = TBLabel(L(@"Recent files"), 13, NSFontWeightSemibold, NSColor.labelColor);
     NSButton *open = TBButton(L(@"Open…"), self, @selector(openPanel:));
+    NSMutableAttributedString *openTitle = [[NSMutableAttributedString alloc] initWithString:[L(@"Open…") stringByAppendingString:@"  "]
+                                                                                   attributes:@{NSFontAttributeName: open.font}];
+    [openTitle appendAttributedString:[[NSAttributedString alloc] initWithString:@"⌘O" attributes:@{
+        NSFontAttributeName: [NSFont systemFontOfSize:11.5], NSForegroundColorAttributeName: Theme.text3}]];
+    open.attributedTitle = openTitle;
     NSStackView *header = TBBar(@[title], @[open], 32);
     header.edgeInsets = NSEdgeInsetsMake(0, 20, 0, 20);
 
     _files = [NSTableView new];
     _files.headerView = nil;
     _files.style = NSTableViewStylePlain;
-    _files.rowHeight = 44;
+    _files.rowHeight = 42;
+    _files.intercellSpacing = NSMakeSize(0, 0);
     _files.backgroundColor = NSColor.clearColor;
     _files.columnAutoresizingStyle = NSTableViewFirstColumnOnlyAutoresizingStyle;
     [_files addTableColumn:[[NSTableColumn alloc] initWithIdentifier:@"file"]];
@@ -426,27 +496,29 @@ static BOOL IsRemoteSQLite(NSDictionary *c) {
     scroll.drawsBackground = NO;
     scroll.hasVerticalScroller = YES;
     scroll.autohidesScrollers = YES;
-
-    _filesEmpty = TBWrappingLabel(L(@"No recent files. Open a database with ⌘O or drop a file here."), 12, NSColor.secondaryLabelColor);
-    _filesEmpty.alignment = NSTextAlignmentCenter;
-    _filesEmpty.selectable = NO;
-    _filesEmpty.translatesAutoresizingMaskIntoConstraints = NO;
-    [scroll addSubview:_filesEmpty];
-    [NSLayoutConstraint activateConstraints:@[[_filesEmpty.centerXAnchor constraintEqualToAnchor:scroll.centerXAnchor],
-                                              [_filesEmpty.centerYAnchor constraintEqualToAnchor:scroll.centerYAnchor constant:-20],
-                                              [_filesEmpty.widthAnchor constraintLessThanOrEqualToConstant:360]]];
+    // the list as an inset card (design: radius 8, editor fill, separator ring, 4 pt inside)
+    NSBox *card = TBPanel(Theme.editor);
+    card.boxType = NSBoxCustom;
+    card.cornerRadius = 8;
+    card.borderWidth = 1;
+    card.borderColor = NSColor.separatorColor;
+    TBPin(scroll, card.contentView, NSEdgeInsetsMake(4, 4, 4, 4));
+    NSView *cardArea = [NSView new];
+    TBPin(card, cardArea, NSEdgeInsetsMake(0, 20, 0, 20));
+    NSTextField *footer = TBLabel(L(@"Open a database with ⌘O or drop a file on this window."), 11.5, NSFontWeightRegular, Theme.text3);
+    footer.alignment = NSTextAlignmentCenter;
 
     NSView *titleSpace = [NSView new];
     [titleSpace.heightAnchor constraintEqualToConstant:TitleBand].active = YES;
-    NSStackView *view = TBColumn(@[titleSpace, header, scroll], scroll);
-    view.edgeInsets = NSEdgeInsetsMake(0, 0, 16, 0);
+    NSStackView *view = TBColumn(@[titleSpace, header, cardArea, footer], cardArea);
+    view.edgeInsets = NSEdgeInsetsMake(0, 0, 14, 0);
     [view setCustomSpacing:6 afterView:header];
+    [view setCustomSpacing:10 afterView:cardArea];
     return view;
 }
 
 - (void)reloadFiles {
     _recent = [ConnectionStore recentFiles];
-    _filesEmpty.hidden = _recent.count > 0;
     [_files reloadData];
 }
 
@@ -455,13 +527,13 @@ static BOOL IsRemoteSQLite(NSDictionary *c) {
     NSImageView *icon = [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"cylinder.split.1x2" accessibilityDescription:nil]];
     icon.symbolConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:18 weight:NSFontWeightRegular];
     NSString *frame = [ConnectionStore frameColorFor:file];
-    icon.contentTintColor = !exists ? NSColor.tertiaryLabelColor : frame.length ? [Theme colorFromHex:frame fallback:NSColor.controlAccentColor] : NSColor.controlAccentColor;
-    NSTextField *name = TBLabel(file[@"name"], 13, NSFontWeightMedium, exists ? NSColor.labelColor : NSColor.tertiaryLabelColor);
+    icon.contentTintColor = frame.length ? [Theme colorFromHex:frame fallback:Theme.text2] : Theme.text2; // the window's frame colour
+    NSTextField *name = TBLabel(file[@"name"], 13, NSFontWeightMedium, exists ? NSColor.labelColor : Theme.text3);
     NSString *where = [[file[@"path"] stringByDeletingLastPathComponent] stringByAbbreviatingWithTildeInPath];
     NSNumber *size = [NSFileManager.defaultManager attributesOfItemAtPath:file[@"path"] error:NULL][NSFileSize];
     NSString *detail = exists ? [NSString stringWithFormat:@"%@ · %@", where, [NSByteCountFormatter stringFromByteCount:size.longLongValue countStyle:NSByteCountFormatterCountStyleFile]]
-                              : [NSString stringWithFormat:@"%@ · %@", where, L(@"missing")];
-    NSTextField *sub = TBLabel(detail, 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
+                              : [NSString stringWithFormat:@"%@ · %@", L(@"File not found"), where];
+    NSTextField *sub = TBLabel(detail, 11, NSFontWeightRegular, exists ? NSColor.secondaryLabelColor : Theme.red);
     sub.lineBreakMode = NSLineBreakByTruncatingMiddle; // keep the file's own folder visible
     // icon · name over folder and size (taking the free width) · read-only badge
     NSView *row = [NSView new];
@@ -471,9 +543,9 @@ static BOOL IsRemoteSQLite(NSDictionary *c) {
         [row addSubview:v];
     }
     NSLayoutXAxisAnchor *end = badge ? badge.leadingAnchor : row.trailingAnchor;
-    CGFloat gap = badge ? -10 : -20;
+    CGFloat gap = -10;
     [NSLayoutConstraint activateConstraints:@[
-        [icon.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:20],
+        [icon.leadingAnchor constraintEqualToAnchor:row.leadingAnchor constant:10], // inside the card, as in the design
         [icon.centerYAnchor constraintEqualToAnchor:row.centerYAnchor],
         [icon.widthAnchor constraintEqualToConstant:22],
         [name.leadingAnchor constraintEqualToAnchor:icon.trailingAnchor constant:10],
@@ -483,7 +555,7 @@ static BOOL IsRemoteSQLite(NSDictionary *c) {
         [sub.trailingAnchor constraintLessThanOrEqualToAnchor:end constant:gap],
         [sub.topAnchor constraintEqualToAnchor:name.bottomAnchor constant:1],
     ]];
-    if (badge) [NSLayoutConstraint activateConstraints:@[[badge.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-20],
+    if (badge) [NSLayoutConstraint activateConstraints:@[[badge.trailingAnchor constraintEqualToAnchor:row.trailingAnchor constant:-10],
                                                          [badge.centerYAnchor constraintEqualToAnchor:row.centerYAnchor]]];
     row.toolTip = file[@"path"];
     return row;
@@ -499,18 +571,20 @@ static BOOL IsRemoteSQLite(NSDictionary *c) {
     if (self.onOpenPanel) self.onOpenPanel();
 }
 
-// Right-click on a file: frame colour, read-only, remove from the list.
+// Right-click on a file (design order): read-only, frame colour ›, remove from the list.
 - (void)menuNeedsUpdate:(NSMenu *)menu {
     [menu removeAllItems];
     NSInteger row = _files.clickedRow;
     if (row < 0 || row >= (NSInteger)_recent.count) return;
     NSDictionary *file = _recent[row];
-    [self addColorItemsTo:menu current:file[@"frame"] ?: @"" action:@selector(setFileColor:) key:file[@"path"]];
-    [menu addItem:NSMenuItem.separatorItem];
     NSMenuItem *readOnly = [menu addItemWithTitle:L(@"Read-only") action:@selector(toggleFileReadOnly:) keyEquivalent:@""];
     readOnly.target = self;
     readOnly.representedObject = file[@"path"];
     readOnly.state = [file[@"production"] boolValue] ? NSControlStateValueOn : NSControlStateValueOff;
+    NSMenu *colors = [NSMenu new];
+    [self addColorItemsTo:colors current:file[@"frame"] ?: @"" action:@selector(setFileColor:) key:file[@"path"]];
+    [colors removeItemAtIndex:0]; // the submenu's title says it already
+    [menu addItemWithTitle:L(@"Frame Colour") action:nil keyEquivalent:@""].submenu = colors;
     [menu addItem:NSMenuItem.separatorItem];
     NSMenuItem *forget = [menu addItemWithTitle:L(@"Remove from List") action:@selector(forgetFile:) keyEquivalent:@""];
     forget.target = self;

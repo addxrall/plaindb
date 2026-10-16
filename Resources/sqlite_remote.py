@@ -7,6 +7,7 @@
 # (or {"error": ...} and exits). Requests:
 #   {"id": n, "op": "execute", "sql": "...", "params": [...], "timeout": seconds}
 #   {"id": n, "op": "writable", "on": true}
+#   {"id": n, "op": "file", "collection": "...", "record": "...", "name": "...", "max": bytes} → {"id": n, "data": "<base64>"}
 # Answers: {"id": n, "columns": [...], "rows": [[...]], "affected": n} or {"id": n, "error": "...", "code": ...}.
 # Values: null, a string (TEXT), {"i": "<integer>"}, {"r": "<real as SQLite prints it>"}, {"b": "<base64>"}.
 #
@@ -16,6 +17,7 @@
 
 import base64
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -167,6 +169,26 @@ def execute(con, request):
     return last or {"columns": [], "rows": [], "affected": 0}
 
 
+FILE_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+
+
+def read_file(path, request):
+    """A file from PocketBase's storage next to the database: pb_data/storage/<collection>/<record>/<name>."""
+    names = [request.get("collection"), request.get("record"), request.get("name")]
+    if not all(isinstance(n, str) and len(n) < 256 and FILE_NAME.match(n) for n in names):
+        raise ValueError("Not a PocketBase file name.")
+    storage = os.path.join(os.path.dirname(os.path.realpath(path)), "storage")
+    file = os.path.realpath(os.path.join(storage, *names))
+    if not file.startswith(os.path.realpath(storage) + os.sep):
+        raise ValueError("Not a PocketBase file name.")
+    if not os.path.isfile(file):
+        raise ValueError("The file isn't in PocketBase's storage.")
+    if os.path.getsize(file) > int(request.get("max") or 0):
+        raise ValueError("The file is too big to preview.")
+    with open(file, "rb") as f:
+        return {"data": base64.b64encode(f.read()).decode("ascii")}
+
+
 def main():
     config = json.loads(sys.stdin.readline())
     state.readonly = bool(config.get("readonly"))
@@ -199,6 +221,8 @@ def main():
                 else:
                     state.writable = False
                 answer.update({"columns": [], "rows": [], "affected": 0})
+            elif request.get("op") == "file":  # reading only, so allowed on read-only connections too
+                answer.update(read_file(config["path"], request))
             else:
                 answer.update(execute(con, request))
         except Exception as e:

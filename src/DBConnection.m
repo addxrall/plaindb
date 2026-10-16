@@ -84,15 +84,18 @@ NSString *DBAddColumnStatement(NSString *schema, NSString *table, NSString *colu
                                                              DBQuoteIdent(column), type];
     if (notNull) [sql appendString:@" NOT NULL"];
     if (defaultExpr.length) [sql appendFormat:@" DEFAULT %@", defaultExpr];
+    [sql appendString:@";"];
     return sql;
 }
 
+// One clause per line, as the design's sheet shows it.
 NSString *DBAddForeignKeyStatement(NSString *schema, NSString *table, NSString *column, NSString *refSchema, NSString *refTable,
                                    NSString *refColumn, NSString *onDelete) {
-    NSMutableString *sql = [NSMutableString stringWithFormat:@"ALTER TABLE %@.%@ ADD CONSTRAINT %@ FOREIGN KEY (%@) REFERENCES %@.%@ (%@)",
+    NSMutableString *sql = [NSMutableString stringWithFormat:@"ALTER TABLE %@.%@\n  ADD CONSTRAINT %@ FOREIGN KEY (%@)\n  REFERENCES %@.%@ (%@)",
         DBQuoteIdent(schema), DBQuoteIdent(table), DBQuoteIdent([NSString stringWithFormat:@"%@_%@_fkey", table, column]),
         DBQuoteIdent(column), DBQuoteIdent(refSchema), DBQuoteIdent(refTable), DBQuoteIdent(refColumn)];
-    if (onDelete.length) [sql appendFormat:@" ON DELETE %@", onDelete];
+    if (onDelete.length) [sql appendFormat:@"\n  ON DELETE %@", onDelete];
+    [sql appendString:@";"];
     return sql;
 }
 

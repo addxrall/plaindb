@@ -194,6 +194,37 @@ static void Run(NSString *label, Maker make) {
     NSString *throughAuthor = DBSearchCondition(pb, @[@"id", @"author"], @{@"author": @[@"main", @"users", @"id", @[@"id", @"email"]]});
     r = [pb execute:[NSString stringWithFormat:@"SELECT id FROM posts WHERE %@", throughAuthor] params:@[DBLikePattern(@"kowalska")] error:&err];
     assert(r.rows.count == 1);
+
+    // PocketBase files: which columns hold them, and where they are (S3 settings without the keys, or pb_data/storage)
+    assert([pb execute:@"UPDATE _collections SET fields = json_insert(fields, '$[#]', json('{\"name\":\"avatar\",\"type\":\"file\",\"maxSelect\":1}')) WHERE id = 'u1';"
+                        "UPDATE _collections SET fields = json_insert(fields, '$[#]', json('{\"name\":\"files\",\"type\":\"file\",\"maxSelect\":3}')) WHERE id = 'p1';"
+                        "CREATE TABLE _params (id TEXT PRIMARY KEY, value JSON);"
+                        "INSERT INTO _params VALUES ('settings', '{\"s3\":{\"enabled\":false,\"bucket\":\"pb-files\",\"region\":\"eu-central-1\","
+                        "\"endpoint\":\"https://s3.eu-central-1.amazonaws.com\",\"accessKey\":\"AKIAEXAMPLE\",\"secret\":\"s3cr3t\"}}')"
+                params:nil error:&err]);
+    NSDictionary *files = [pb pocketBaseFilesOfTable:@"posts"];
+    assert(([files isEqual:(@{@"collection": @"p1", @"columns": @{@"files": @YES}})])); // S3 off: no "s3"
+    assert([pb pocketBaseFilesOfTable:@"tags"] == nil);
+    assert([pb execute:@"UPDATE _params SET value = json_set(value, '$.s3.enabled', json('true'))" params:nil error:&err]);
+    files = [pb pocketBaseFilesOfTable:@"users"];
+    assert(([files isEqual:(@{@"collection": @"u1", @"columns": @{@"avatar": @NO},
+                              @"s3": @{@"bucket": @"pb-files", @"region": @"eu-central-1", @"endpoint": @"https://s3.eu-central-1.amazonaws.com"}})]));
+    assert(![files.description containsString:@"s3cr3t"] && ![files.description containsString:@"AKIA"]);
+
+    NSString *storage = [dir stringByAppendingPathComponent:@"storage/u1/abc"];
+    [NSFileManager.defaultManager createDirectoryAtPath:storage withIntermediateDirectories:YES attributes:nil error:NULL];
+    NSData *picture = [NSData dataWithBytes:"\x89PNG\r\n\x1a\n-picture-" length:17];
+    [picture writeToFile:[storage stringByAppendingPathComponent:@"face_x1.png"] atomically:YES];
+    [NSFileManager.defaultManager createSymbolicLinkAtPath:[storage stringByAppendingPathComponent:@"escape.png"] withDestinationPath:path error:NULL];
+    assert([[pb pocketBaseFileInCollection:@"u1" record:@"abc" name:@"face_x1.png" maxBytes:1024 error:&err] isEqual:picture]);
+    for (NSArray *bad in @[@[@"u1", @"abc", @"../../test.db"], @[@"..", @"abc", @"face_x1.png"], @[@"u1", @"abc", @"escape.png"],
+                           @[@"u1", @"abc", @"missing.png"], @[@"u1", @"abc", @""]]) {
+        err = nil;
+        // a limit far above test.db's size, so only the name and path checks can refuse these
+        assert(![pb pocketBaseFileInCollection:bad[0] record:bad[1] name:bad[2] maxBytes:100000000 error:&err] && err.localizedDescription.length);
+    }
+    err = nil;
+    assert(![pb pocketBaseFileInCollection:@"u1" record:@"abc" name:@"face_x1.png" maxBytes:8 error:&err] && err); // too big
     [pb close];
 
     // read-only: refused with 25006, allowed in a write transaction, read-only again afterwards

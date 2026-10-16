@@ -38,11 +38,12 @@ PlainDB is written in Objective-C and AppKit, with no Electron and no web views.
   - open it in a new tab ("Open in New Tab");
   - see it with its neighbours on the diagram ("Show on Diagram");
   - **empty** it (`TRUNCATE`, or `DELETE` in SQLite, after typing its name).
-- **Tabs**: "Open in New Tab" or ⌘-click a table to keep several tables of one connection open as native window tabs (a plain click still replaces the current table). Tabs share the connection, and they come back the next time you open that connection.
+- **Tabs**: "Open in New Tab" or ⌘-click a table to keep several tables of one connection open as native window tabs (a plain click still replaces the current table); "+" in the tab bar or ⌘T opens the current table again. Tabs share the connection, and they come back the next time you open that connection.
 - **Data**: 200 rows per page with the table's total, row numbers, click a header to sort, numbers right-aligned. ⌘C copies the selected rows as tab-separated text.
 - **Foreign keys**: a ↗ next to the value opens the referenced row in a popover. Editing the value opens a search in the referenced table: type a name, pick the row, and its key goes into the cell.
 - **Find (⌘F or the magnifier)**: search every column of the whole table (not just the loaded page), ignoring case; matches are highlighted and counted. Foreign keys are followed one level: in `claims`, typing a driver's surname finds their claims, and the matching `driver_id` cells are highlighted. In the SQL editor ⌘F searches the query text.
 - **Images** stored as `bytea`, base64, `data:` URIs or image URLs get a 🖼; click it to see the picture, its size and dimensions.
+- **Files in S3 or PocketBase storage** get a 🖼 too: PocketBase file fields, and, once a connection has an S3 bucket in **S3 files** (bucket, region, AWS profile), values that look like keys of files in it (`pbc_123/abc/photo.jpeg`, Postgres arrays or JSON lists of them, `s3://bucket/key`). Images and PDFs open in a preview, anything else can be saved with "Save As…". Files are downloaded with your `aws` CLI and profile (SSO included), so PlainDB keeps no AWS keys; PocketBase files that aren't in S3 are read from `pb_data/storage`, also over SSH.
 - **Structure**: columns, types, `NOT NULL`, defaults, primary key, indexes.
 
 ### Editing
@@ -122,6 +123,8 @@ How it stays safe:
 UI strings are written in English in the code (`L(@"…")`, plurals with `LN(@"%lu rows", n)`). Polish lives in `Resources/pl.lproj/Localizable.strings` and `Localizable.stringsdict`. `make test` fails when a string is missing, unused, or its format specifiers don't match.
 
 ## Known limitations
+
+- File previews need the AWS CLI (`brew install awscli`) for S3, are capped at 50 MB (20 MB from PocketBase storage), and can't show files the application encrypted itself.
 
 - After each rebuild macOS may ask for Keychain access, because the app's signature changes. Choose "Always Allow".
 - The SQL tab loads the whole result into memory. Add a `LIMIT` for huge tables.

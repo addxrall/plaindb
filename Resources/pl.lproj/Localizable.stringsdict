@@ -3,6 +3,19 @@
 <!-- Polish plurals: one (1), few (2–4, 22–24…), many (0, 5–21…). Used through LN() in src/. -->
 <plist version="1.0">
 <dict>
+	<key>%lu pages</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu strona</string>
+			<key>few</key><string>%lu strony</string>
+			<key>many</key><string>%lu stron</string>
+			<key>other</key><string>%lu stron</string>
+		</dict>
+	</dict>
 	<key>%lu rows</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>

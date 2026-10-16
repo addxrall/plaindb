@@ -18,7 +18,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, nullable) SSHTunnel *tunnel;
 @property (nonatomic, readonly) NSDictionary *info;
 // "Open in New Tab" (sidebar menu, ⌘-click): the owner makes a tab of the same connection showing that table.
-@property (nonatomic, copy, nullable) void (^onOpenInNewTab)(MainWindowController *controller, NSString *schema, NSString *table);
+// table nil: an empty tab (the tab bar's "+" or ⌘T with no table open)
+@property (nonatomic, copy, nullable) void (^onOpenInNewTab)(MainWindowController *controller, NSString *_Nullable schema, NSString *_Nullable table);
 // The window's table or Data / Structure / SQL tab changed (the owner saves the open tabs).
 @property (nonatomic, copy, nullable) void (^onTabsChanged)(MainWindowController *controller);
 // Shows that table in `tab` (0 Data, 1 Structure, 2 SQL), now or as soon as the table list has loaded.

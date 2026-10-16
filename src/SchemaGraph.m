@@ -1,8 +1,9 @@
 #import "SchemaGraph.h"
 
 const NSUInteger SchemaMaxRows = 20;
-const CGFloat SchemaRowHeight = 20, SchemaHeaderHeight = 30, SchemaBoxWidth = 230;
-static const CGFloat ColumnGap = 90, RowGap = 28, Margin = 40;
+const CGFloat SchemaRowHeight = 20, SchemaHeaderHeight = 30, SchemaBoxWidth = 220;
+// the design's metrics: 34 pt between columns and boxes (24 between neighbours), 24 pt margin, 6 pt under the last row
+static const CGFloat ColumnGap = 34, RowGap = 34, NeighbourRowGap = 24, Margin = 24, BottomPadding = 6;
 
 @implementation SchemaTable
 - (NSString *)qualifiedName {
@@ -115,7 +116,7 @@ static const CGFloat ColumnGap = 90, RowGap = 28, Margin = 40;
 
 static CGFloat BoxHeight(SchemaTable *t) {
     NSUInteger rows = MIN(t.columns.count, SchemaMaxRows) + (t.columns.count > SchemaMaxRows ? 1 : 0);
-    return SchemaHeaderHeight + rows * SchemaRowHeight;
+    return SchemaHeaderHeight + rows * SchemaRowHeight + BottomPadding;
 }
 
 // 0 for tables referencing nothing, otherwise one more than the highest table they reference.
@@ -190,23 +191,15 @@ void SchemaLayout(SchemaGraph *graph, SchemaTable *focus, NSDictionary<NSString 
         t.frame = NSMakeRect(at.pointValue.x, at.pointValue.y, SchemaBoxWidth, BoxHeight(t));
         [placed addObject:[NSValue valueWithRect:t.frame]];
     }
-    CGFloat tallest = 0, area = 0;
-    for (NSArray<SchemaTable *> *column in columns) {
-        CGFloat height = 0;
-        for (SchemaTable *t in column) {
-            height += BoxHeight(t) + RowGap;
-            area += (BoxHeight(t) + RowGap) * (SchemaBoxWidth + ColumnGap);
-        }
-        tallest = MAX(tallest, height);
-    }
+    CGFloat area = 0, rowGap = focus ? NeighbourRowGap : RowGap;
+    for (NSArray<SchemaTable *> *column in columns)
+        for (SchemaTable *t in column) area += (BoxHeight(t) + rowGap) * (SchemaBoxWidth + ColumnGap);
     // A column taller than this wraps into further sub-columns, so a database without keys (one rank) or with
     // many root tables comes out roughly square instead of as one long strip. Neighbours mode never wraps.
     CGFloat limit = focus ? CGFLOAT_MAX : MAX(300, sqrt(area));
     __block CGFloat x = Margin;
     [columns enumerateObjectsUsingBlock:^(NSMutableArray<SchemaTable *> *column, NSUInteger c, BOOL *stop) {
-        CGFloat height = 0;
-        for (SchemaTable *t in column) height += BoxHeight(t) + RowGap;
-        CGFloat y = Margin + (focus ? (tallest - height) / 2 : 0); // neighbours mode: columns centred on each other
+        CGFloat y = Margin; // every column starts at the top, neighbours mode too
         BOOL started = NO;
         for (SchemaTable *t in column) {
             if (!focus && saved[t.qualifiedName]) continue;
@@ -219,14 +212,14 @@ void SchemaLayout(SchemaGraph *graph, SchemaTable *focus, NSDictionary<NSString 
             for (BOOL moved = YES; moved;) {
                 moved = NO;
                 for (NSValue *other in placed)
-                    if (NSIntersectsRect(NSInsetRect(frame, 0, -RowGap / 2), other.rectValue)) {
-                        frame.origin.y = NSMaxY(other.rectValue) + RowGap;
+                    if (NSIntersectsRect(NSInsetRect(frame, 0, -rowGap / 2), other.rectValue)) {
+                        frame.origin.y = NSMaxY(other.rectValue) + rowGap;
                         moved = YES;
                     }
             }
             t.frame = frame;
             [placed addObject:[NSValue valueWithRect:frame]];
-            y = NSMaxY(frame) + RowGap;
+            y = NSMaxY(frame) + rowGap;
         }
         x += SchemaBoxWidth + ColumnGap; // the next rank starts right of this one's last sub-column
     }];

@@ -4,6 +4,7 @@
 #import "Connector.h"
 #import "DatePicker.h"
 #import "DiagramView.h"
+#import "FileRefs.h"
 #import "GridView.h"
 #import "ImageValue.h"
 #import "JSONInspector.h"
@@ -109,6 +110,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     NSArray<NSString *> *_databases;     // other databases on this server, for the switcher
     NSMenu *_switchMenu;
     NSDictionary<NSString *, NSArray *> *_foreignKeys; // column → [referenced schema, table, column]
+    NSDictionary *_pocketBaseFiles; // the open table's file fields, see pocketBaseFilesOfTable:
     NSDictionary<NSString *, NSArray *> *_searchReferences; // the same plus the referenced table's columns, for ⌘F
     NSDictionary<NSString *, NSString *> *_columnKinds; // column → TBValueKind (bool, date, time…)
     NSDictionary<NSString *, NSString *> *_columnTypes; // column → type as Postgres names it, e.g. jsonb
@@ -159,6 +161,7 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     SchemaGraph *_schemaGraph;          // the whole database, nil until loaded (diagram and SQL completion)
     SQLCompleter *_completer;
     NSString *_diagramFocus;            // "schema.table" in neighbours mode, nil for the whole database
+    NSString *_diagramReselect;         // "schema.table" to select once the diagram is read again (after a sheet ran)
     BOOL _diagramLoading;
     DiagramView *_diagramView;
     NSScrollView *_diagramScroll;
@@ -253,6 +256,8 @@ static NSString *const PinsKey = @"pinnedTables"; // { "<connection id>/<databas
     for (GridView *grid in @[_dataGrid, _sqlGrid]) {
         __weak GridView *weakGrid = grid;
         grid.onOpenImage = ^(NSInteger row, NSInteger column, NSRect rect) { [weakSelf openImageInGrid:weakGrid row:row column:column rect:rect]; };
+        grid.onOpenFile = ^(NSInteger row, NSInteger column, NSRect rect) { [weakSelf openFileInGrid:weakGrid row:row column:column rect:rect]; };
+        grid.detectsFileKeys = [_info[@"s3Bucket"] length] > 0; // keys of files in the connection's S3 bucket
         grid.onOpenJSON = ^(NSInteger row, NSInteger column) { [weakSelf showJSONInGrid:weakGrid row:row column:column open:YES]; };
         grid.onSelectCell = ^(NSInteger row, NSInteger column) { [weakSelf showJSONInGrid:weakGrid row:row column:column open:NO]; };
         grid.booleanTrue = _conn.booleanTrue; // what a toggled checkbox writes: t / f, or 1 / 0 for SQLite
@@ -635,14 +640,14 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
 // Bar (mode, back to the whole database, Open Table, Reset Layout, Export…) above the diagram, loading and empty pages.
 - (NSView *)buildDiagramTab {
     _diagramTitle = TBLabel(@"", 13, NSFontWeightSemibold, NSColor.labelColor);
-    _diagramBack = TBButton(L(@"Whole Database"), self, @selector(showWholeDiagram:));
-    _diagramBack.controlSize = NSControlSizeSmall;
+    _diagramBack = TBButton(L(@"Whole Database"), self, @selector(showWholeDiagram:)); // design: "‹ Cała baza"
+    _diagramBack.image = [NSImage imageWithSystemSymbolName:@"chevron.left" accessibilityDescription:nil];
+    _diagramBack.imagePosition = NSImageLeading;
+    _diagramBack.contentTintColor = Theme.text2;
     _diagramOpen = TBButton(L(@"Open Table"), self, @selector(openDiagramSelection:));
-    _diagramOpen.controlSize = NSControlSizeSmall;
     NSButton *reset = _diagramReset = TBButton(L(@"Reset Layout"), self, @selector(resetDiagramLayout:));
-    reset.controlSize = NSControlSizeSmall;
     NSButton *export = TBButton(L(@"Export…"), self, @selector(exportDiagram:));
-    export.controlSize = NSControlSizeSmall;
+    for (NSButton *b in @[_diagramBack, _diagramOpen, reset, export]) b.font = [NSFont systemFontOfSize:12.5]; // the design's 28 pt pills
     NSStackView *bar = TBBar(@[_diagramTitle, _diagramBack], @[_diagramOpen, reset, export], 38);
 
     _diagramView = [DiagramView new];
@@ -696,6 +701,7 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
     __weak MainWindowController *weakSelf = self;
     id<DBConnection> conn = _conn;
     __block SchemaSheet *keep = sheet; // alive while it is shown
+    NSString *edited = _diagramView.selected.qualifiedName; // the box whose menu opened the sheet
     sheet.onRun = ^(NSString *sql, void (^done)(NSError *)) {
         [weakSelf run:^DBResult *(NSError **e) {
             return [conn inWriteTransaction:^DBResult *(NSError **e2) { return [conn execute:sql params:nil error:e2]; } error:e];
@@ -703,6 +709,7 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
             done(nil);
             keep = nil;
             MainWindowController *strongSelf = weakSelf;
+            if (strongSelf) strongSelf->_diagramReselect = edited; // stays selected, with its new column or arrow
             [strongSelf loadDiagram];
             [strongSelf loadTables];
             if (strongSelf.openTable) [strongSelf loadStructure];
@@ -755,11 +762,12 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
     _diagramState.selectedIndex = graph.tables.count ? 0 : 2;
     _diagramTitle.stringValue = focus ? [NSString stringWithFormat:L(@"Neighbours of %@"), ShownName(focus.schema, focus.name)] : L(@"Whole database");
     _diagramBack.hidden = !focus;
-    _diagramReset.hidden = focus != nil; // only the whole-database layout is remembered
     _diagramStatus = [NSString stringWithFormat:@"%@ · %@", LN(@"%lu tables", graph.tables.count), LN(@"%lu foreign keys", graph.edges.count)];
     [self updateStatus];
     // the table open in this window (or the focus) starts selected and in view
-    SchemaTable *selected = focus ?: (_table ? [graph tableNamed:[NSString stringWithFormat:@"%@.%@", _schema, _table]] : nil);
+    SchemaTable *selected = (_diagramReselect ? [graph tableNamed:_diagramReselect] : nil)
+                         ?: focus ?: (_table ? [graph tableNamed:[NSString stringWithFormat:@"%@.%@", _schema, _table]] : nil);
+    _diagramReselect = nil;
     _diagramView.selected = selected;
     self.diagramOpenEnabled = selected != nil;
     if (selected) [_diagramView scrollRectToVisible:NSInsetRect(selected.frame, -40, -40)];
@@ -809,6 +817,7 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
 }
 
 - (void)resetDiagramLayout:(id)sender {
+    if (_diagramFocus) return [self showDiagram]; // neighbours aren't remembered: laying them out again is enough
     NSMutableDictionary *all = [[NSUserDefaults.standardUserDefaults dictionaryForKey:DiagramPositionsKey] mutableCopy];
     all[TBConnectionIdentity(_info)] = nil;
     [NSUserDefaults.standardUserDefaults setObject:all ?: @{} forKey:DiagramPositionsKey];
@@ -843,7 +852,8 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
 
 - (NSView *)buildSQLTab {
     NSButton *run = AccentButton([NSString stringWithFormat:@"%@  ⌘R", L(@"Run")], self, @selector(runQuery:));
-    NSStackView *header = TBBar(@[TBLabel(L(@"Query"), 12, NSFontWeightRegular, NSColor.secondaryLabelColor)], @[run], 36);
+    NSTextField *completionHint = TBLabel(L(@"⌃Space: suggestions"), 11, NSFontWeightRegular, Theme.text3);
+    NSStackView *header = TBBar(@[TBLabel(L(@"Query"), 12, NSFontWeightRegular, NSColor.secondaryLabelColor)], @[completionHint, run], 36);
     NSTextView *sqlText;
     NSScrollView *editor = SQLTextScrollView(&sqlText, YES, YES);
     _sqlText = sqlText;
@@ -1065,6 +1075,65 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
     [self showPopover:preview rect:rect inView:grid.table];
 }
 
+// 🖼 on a file kept elsewhere: a PocketBase file field (its S3 bucket or pb_data/storage), or keys of files in the
+// connection's S3 bucket. Several files: a menu of their names first.
+- (void)openFileInGrid:(GridView *)grid row:(NSInteger)row column:(NSInteger)column rect:(NSRect)rect {
+    id value = [grid valueAtRow:row column:column];
+    NSString *columnName = grid.result.columns[column];
+    NSDictionary *pb = grid == _dataGrid && _pocketBaseFiles[@"columns"][columnName] ? _pocketBaseFiles : nil;
+    NSUInteger idColumn = [grid.result.columns indexOfObject:@"id"];
+    id record = pb && idColumn != NSNotFound ? [grid valueAtRow:row column:idColumn] : nil;
+    if (pb && ![record isKindOfClass:NSString.class]) return; // a new row: nothing uploaded yet
+    NSArray<NSString *> *files = pb ? PocketBaseFileNames(value) : FileKeysInValue(value);
+    __weak MainWindowController *weakSelf = self;
+    void (^open)(NSString *) = ^(NSString *file) {
+        NSString *title = [NSString stringWithFormat:@"%@ · %@", columnName, file.lastPathComponent];
+        ImagePreview *preview = [[ImagePreview alloc] initWithTitle:title name:file.lastPathComponent loader:^(void (^done)(NSData *, NSError *)) {
+            [weakSelf loadFile:file pocketBase:pb record:record done:done];
+        }];
+        [weakSelf showPopover:preview rect:rect inView:grid.table];
+    };
+    if (files.count == 1) return open(files[0]);
+    NSMenu *menu = [NSMenu new];
+    for (NSString *file in files) {
+        NSMenuItem *item = [menu addItemWithTitle:file.lastPathComponent action:@selector(openFileMenuItem:) keyEquivalent:@""];
+        item.target = self;
+        item.representedObject = ^{ open(file); };
+    }
+    [menu popUpMenuPositioningItem:nil atLocation:NSMakePoint(NSMinX(rect), NSMaxY(rect)) inView:grid.table];
+}
+
+- (void)openFileMenuItem:(NSMenuItem *)sender {
+    ((void (^)(void))sender.representedObject)();
+}
+
+static const NSUInteger S3PreviewLimit = 50 << 20, StoragePreviewLimit = 20 << 20;
+
+// The bytes of a file: from S3 with the user's aws CLI (the connection's bucket, or the one PocketBase uses), or
+// from PocketBase's own storage through the connection.
+- (void)loadFile:(NSString *)file pocketBase:(NSDictionary *)pb record:(NSString *)record done:(void (^)(NSData *, NSError *))done {
+    NSString *bucket = _info[@"s3Bucket"], *region = _info[@"s3Region"] ?: @"", *profile = _info[@"awsProfile"] ?: @"", *endpoint = @"";
+    if (pb && !bucket.length && pb[@"s3"]) {
+        bucket = pb[@"s3"][@"bucket"];
+        region = pb[@"s3"][@"region"];
+        endpoint = pb[@"s3"][@"endpoint"];
+    }
+    if (pb && !bucket.length) {
+        id<DBConnection> conn = _conn;
+        dispatch_async(conn.queue, ^{
+            NSError *error = nil;
+            NSData *data = [conn pocketBaseFileInCollection:pb[@"collection"] record:record name:file maxBytes:StoragePreviewLimit error:&error];
+            dispatch_async(dispatch_get_main_queue(), ^{ done(data, error); });
+        });
+        return;
+    }
+    if (pb && !(PocketBaseFileNameValid(pb[@"collection"]) && PocketBaseFileNameValid(record) && PocketBaseFileNameValid(file)))
+        return done(nil, DBError(L(@"Not a PocketBase file name."), nil));
+    NSArray *location = FileS3Location(pb ? [NSString stringWithFormat:@"%@/%@/%@", pb[@"collection"], record, file] : file, bucket ?: @"");
+    if (!location) return done(nil, DBError(L(@"Set the S3 bucket for files in the connection's settings."), nil));
+    FileS3Fetch(FileAWSExecutable(), location[0], location[1], region ?: @"", profile, endpoint ?: @"", S3PreviewLimit, done);
+}
+
 // ↗ on a foreign key value: the referenced row, field by field.
 - (void)openReferenceAtRow:(NSInteger)row column:(NSInteger)column rect:(NSRect)rect {
     NSString *name = _dataGrid.result.columns[column];
@@ -1201,22 +1270,48 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
     if (self.onOpenInNewTab) self.onOpenInNewTab(self, t[0], t[1]);
 }
 
+// The tab bar's "+" and ⌘T: the open table again in a new tab, or an empty tab when none is open.
+- (void)newWindowForTab:(id)sender {
+    if (self.onOpenInNewTab) self.onOpenInNewTab(self, _schema, _table);
+}
+
 #pragma mark - Switching database or connection
 
-// Connection name and target at the left of the toolbar (as in the design), with ▾: a click opens the switcher.
+// Connection icon, name and target at the left of the toolbar (as in the design), with ⌃⌄: a click opens the switcher.
 - (NSView *)switcherView {
-    NSTextField *name = TBLabel(_info[@"name"], 13, NSFontWeightSemibold, NSColor.labelColor);
-    NSTextField *target = TBLabel(self.window.subtitle, 11, NSFontWeightRegular, NSColor.secondaryLabelColor);
-    NSImageView *chevron = [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"chevron.down" accessibilityDescription:nil]];
+    NSTextField *name = TBLabel(_info[@"name"], 12.5, NSFontWeightSemibold, NSColor.labelColor);
+    NSTextField *target = TBLabel(self.window.subtitle, 10.5, NSFontWeightRegular, Theme.text2);
+    NSImageView *chevron = [NSImageView imageViewWithImage:[NSImage imageWithSystemSymbolName:@"chevron.up.chevron.down" accessibilityDescription:nil]];
     chevron.symbolConfiguration = [NSImageSymbolConfiguration configurationWithPointSize:9 weight:NSFontWeightSemibold];
-    chevron.contentTintColor = NSColor.secondaryLabelColor;
+    chevron.contentTintColor = Theme.text2;
     for (NSTextField *label in @[name, target]) // full text up to the 320 pt cap below
         [label setContentCompressionResistancePriority:NSLayoutPriorityDefaultHigh - 1 forOrientation:NSLayoutConstraintOrientationHorizontal];
     NSStackView *texts = TBColumn(@[name, target], nil);
     texts.spacing = 1;
-    NSStackView *view = [NSStackView stackViewWithViews:@[texts, chevron]];
-    view.spacing = 6;
-    view.edgeInsets = NSEdgeInsetsMake(2, 6, 2, 6);
+    // 24 pt round icon: accent on a light accent disc, white on the frame colour for production
+    NSColor *frame = _production ? [Theme colorFromHex:[ConnectionStore frameColorFor:_info] fallback:Theme.productionBanner] : nil;
+    NSColor *disc = frame ?: [NSColor colorWithName:nil dynamicProvider:^NSColor *(NSAppearance *appearance) {
+        BOOL dark = [appearance bestMatchFromAppearancesWithNames:@[NSAppearanceNameAqua, NSAppearanceNameDarkAqua]] == NSAppearanceNameDarkAqua;
+        return [NSColor.controlAccentColor colorWithAlphaComponent:dark ? 0.2 : 0.12];
+    }];
+    NSColor *glyphColor = frame ? NSColor.whiteColor : NSColor.controlAccentColor;
+    NSImage *glyph = [[NSImage imageWithSystemSymbolName:TBIsSQLite(_info) ? @"doc" : @"cylinder" accessibilityDescription:nil]
+                      imageWithSymbolConfiguration:[NSImageSymbolConfiguration configurationWithPointSize:11 weight:NSFontWeightMedium]];
+    NSImageView *icon = [NSImageView imageViewWithImage:[NSImage imageWithSize:NSMakeSize(24, 24) flipped:NO drawingHandler:^BOOL(NSRect r) {
+        [disc setFill];
+        [[NSBezierPath bezierPathWithOvalInRect:r] fill];
+        NSImage *tinted = [glyph copy];
+        [tinted lockFocus];
+        [glyphColor set];
+        NSRectFillUsingOperation((NSRect){NSZeroPoint, tinted.size}, NSCompositingOperationSourceAtop);
+        [tinted unlockFocus];
+        [tinted drawInRect:NSMakeRect(round((24 - tinted.size.width) / 2), round((24 - tinted.size.height) / 2), tinted.size.width, tinted.size.height)];
+        return YES;
+    }]];
+    [NSLayoutConstraint activateConstraints:@[[icon.widthAnchor constraintEqualToConstant:24], [icon.heightAnchor constraintEqualToConstant:24]]];
+    NSStackView *view = [NSStackView stackViewWithViews:@[icon, texts, chevron]];
+    view.spacing = 8;
+    view.edgeInsets = NSEdgeInsetsMake(2, 6, 2, 12); // design: 0 12 0 6 inside the 36 pt pill
     view.toolTip = L(@"Switch database or connection");
     view.accessibilityRole = NSAccessibilityPopUpButtonRole;
     view.accessibilityLabel = L(@"Switch database or connection");
@@ -1245,6 +1340,7 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
         NSMenuItem *item = [menu addItemWithTitle:db action:@selector(switchDatabase:) keyEquivalent:@""];
         item.target = self;
         item.representedObject = db;
+        item.attributedTitle = [[NSAttributedString alloc] initWithString:db attributes:@{NSFontAttributeName: [Theme mono:13]}]; // names, as in the design
         item.state = [db isEqual:_info[@"database"]] ? NSControlStateValueOn : NSControlStateValueOff;
     }
     NSArray *saved = [ConnectionStore load], *files = [ConnectionStore recentFiles];
@@ -1254,7 +1350,8 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
         [menu addItem:[NSMenuItem sectionHeaderWithTitle:section[0]]];
         for (NSDictionary *c in section[1]) {
             NSString *address = [c[@"kind"] isEqual:@"sqlite"] ? [[c[@"path"] stringByDeletingLastPathComponent] stringByAbbreviatingWithTildeInPath]
-                              : [c[@"sshHost"] length] ? c[@"sshHost"]
+                              : [c[@"kind"] isEqual:@"sqlite-ssh"] ? [NSString stringWithFormat:L(@"%@ via %@"), [c[@"path"] lastPathComponent] ?: @"", c[@"sshHost"] ?: @""]
+                              : [c[@"sshHost"] length] ? [NSString stringWithFormat:L(@"via %@"), c[@"sshHost"]]
                               : [NSString stringWithFormat:@"%@:%@", [c[@"host"] length] ? c[@"host"] : @"localhost", c[@"port"] ?: @"5432"];
             [self addConnectionItem:c address:address to:menu];
         }
@@ -1330,6 +1427,15 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
     NSMenuItem *tab = [menu addItemWithTitle:L(@"Open in New Tab") action:@selector(openInNewTab:) keyEquivalent:@""];
     tab.target = self;
     tab.representedObject = _sideRows[row];
+    // the shortcut for it, dimmed on the right as in the design: ⌘-click on the table
+    NSMutableParagraphStyle *tabs = [NSMutableParagraphStyle new];
+    tabs.tabStops = @[[[NSTextTab alloc] initWithTextAlignment:NSTextAlignmentRight location:230 options:@{}]];
+    NSMutableAttributedString *title = [[NSMutableAttributedString alloc] initWithString:[L(@"Open in New Tab") stringByAppendingString:@"\t"]
+                                                                               attributes:@{NSFontAttributeName: [NSFont menuFontOfSize:0]}];
+    [title appendAttributedString:[[NSAttributedString alloc] initWithString:L(@"⌘-click") attributes:@{
+        NSFontAttributeName: [NSFont menuFontOfSize:11.5], NSForegroundColorAttributeName: NSColor.secondaryLabelColor}]];
+    [title addAttribute:NSParagraphStyleAttributeName value:tabs range:NSMakeRange(0, title.length)];
+    tab.attributedTitle = title;
     if ([_sideRows[row][2] isEqual:@"table"]) { // views aren't on the diagram
         NSMenuItem *diagram = [menu addItemWithTitle:L(@"Show on Diagram") action:@selector(showOnDiagram:) keyEquivalent:@""];
         diagram.target = self;
@@ -1586,6 +1692,17 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
         self->_foreignKeys = keys;
         [self loadSearchReferencesFor:keys schema:schema table:table];
     } failed:^(NSError *error, double ms) {}]; // without foreign keys the grid just has no ↗
+    if ([conn respondsToSelector:@selector(pocketBaseFilesOfTable:)]) {
+        __block NSDictionary *files = nil;
+        [self run:^DBResult *(NSError **e) {
+            files = [conn pocketBaseFilesOfTable:table];
+            return [DBResult new];
+        } done:^(DBResult *r, double ms) {
+            if (![self->_schema isEqual:schema] || ![self->_table isEqual:table]) return;
+            self->_pocketBaseFiles = files;
+            [self applyEditability];
+        } failed:^(NSError *error, double ms) {}];
+    }
     [self run:^DBResult *(NSError **e) { return [conn indexesInSchema:schema table:table error:e]; } done:^(DBResult *r, double ms) {
         DBResult *shown = [DBResult new];
         shown.columns = @[L(@"Name"), L(@"Definition")];
@@ -1681,15 +1798,17 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
     _readOnlyText.stringValue = _isView ? L(@"View: data is read-only.")
                                         : [NSString stringWithFormat:L(@"Read-only: table %@ has no primary key, so a row can't be identified unambiguously."),
                                                                      [self displayName]];
-    NSMutableIndexSet *defaults = [NSMutableIndexSet new], *references = [NSMutableIndexSet new];
+    NSMutableIndexSet *defaults = [NSMutableIndexSet new], *references = [NSMutableIndexSet new], *files = [NSMutableIndexSet new];
     NSMutableDictionary *kinds = [NSMutableDictionary new];
     [_dataGrid.result.columns enumerateObjectsUsingBlock:^(NSString *name, NSUInteger i, BOOL *stop) {
         if ([self->_defaultColumns containsObject:name]) [defaults addIndex:i];
         if (self->_foreignKeys[name]) [references addIndex:i];
+        if (self->_pocketBaseFiles[@"columns"][name]) [files addIndex:i];
         kinds[@(i)] = self->_columnKinds[name];
     }];
     _dataGrid.defaultColumns = defaults;
     _dataGrid.referenceColumns = references;
+    _dataGrid.fileColumns = files;
     _dataGrid.columnKinds = kinds;
 }
 
@@ -1953,6 +2072,7 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
     _isView = [t[2] isEqual:@"view"];
     _estimate = t[3];
     _foreignKeys = _searchReferences = nil; // until this table's are loaded
+    _pocketBaseFiles = nil;
     _columnKinds = _columnTypes = nil;
     _pkColumns = _columnNames = nil; // read-only until the structure is loaded
     _searchTerm = nil;                 // a search belongs to one table
@@ -1964,8 +2084,9 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
     [_dataGrid resetSort];
     _tableLabel.stringValue = [self displayName];
     self.window.title = [self displayName];
-    [self showTab:self.currentTab == TabSQL ? TabData : self.currentTab];
-    if (self.currentTab == TabDiagram && !_diagramFocus) [self showDiagram]; // the chosen table selected and in view
+    self.window.tab.toolTip = [NSString stringWithFormat:@"%@ — %@", [self displayName], _info[@"name"] ?: @""];
+    // a table picked in the sidebar opens its data, also from the SQL editor or the diagram (as in the design)
+    [self showTab:self.currentTab == TabSQL || self.currentTab == TabDiagram ? TabData : self.currentTab];
     [self loadStructure];
     [self loadDataShowingSpinner:YES];
 }

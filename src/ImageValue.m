@@ -1,5 +1,7 @@
 #import "ImageValue.h"
 #import "DBConnection.h"
+#import "FileRefs.h"
+#import <PDFKit/PDFKit.h>
 #import "UI.h"
 
 // Magic numbers of the formats NSImage reads, as Postgres prints them in bytea hex output.
@@ -88,19 +90,26 @@ void ImageValueLoad(NSString *value, void (^done)(NSData *data, NSError *error))
 @end
 
 @implementation ImagePreview {
-    NSString *_title, *_value;
+    NSString *_title, *_name; // _name: set for files, which can be saved
+    void (^_loader)(void (^)(NSData *, NSError *));
     NSImageView *_imageView;
     NSTextField *_info;
     NSLayoutConstraint *_width, *_height;
     NSImage *_image;
+    NSData *_data;
     NSProgressIndicator *_spinner;
-    NSButton *_copy;
+    NSButton *_copy, *_save;
 }
 
 - (instancetype)initWithTitle:(NSString *)title value:(NSString *)value {
+    return [self initWithTitle:title name:nil loader:^(void (^done)(NSData *, NSError *)) { ImageValueLoad(value, done); }];
+}
+
+- (instancetype)initWithTitle:(NSString *)title name:(NSString *)name loader:(void (^)(void (^)(NSData *, NSError *)))loader {
     if ((self = [super initWithNibName:nil bundle:nil])) {
         _title = title;
-        _value = value;
+        _name = name;
+        _loader = loader;
     }
     return self;
 }
@@ -128,16 +137,42 @@ void ImageValueLoad(NSString *value, void (^done)(NSData *data, NSError *error))
 
     _copy = TBButton(L(@"Copy Image"), self, @selector(copyImage:));
     _copy.enabled = NO;
-    self.view = TBColumn(@[header, TBSeparator(), stage, TBSeparator(), TBBar(@[], @[_copy], 40)], stage);
+    _save = TBButton(L(@"Save As…"), self, @selector(saveFile:));
+    _save.enabled = NO;
+    _save.hidden = !_name;
+    self.view = TBColumn(@[header, TBSeparator(), stage, TBSeparator(), TBBar(@[], @[_save, _copy], 40)], stage);
     [_spinner startAnimation:nil];
 
     __weak ImagePreview *weakSelf = self;
-    ImageValueLoad(_value, ^(NSData *data, NSError *error) { [weakSelf showData:data error:error]; });
+    _loader(^(NSData *data, NSError *error) { [weakSelf showData:data error:error]; });
 }
 
 - (void)showData:(NSData *)data error:(NSError *)error {
     [_spinner stopAnimation:nil];
+    _data = data;
+    _save.enabled = data != nil;
+    NSString *size = [NSByteCountFormatter stringFromByteCount:data.length countStyle:NSByteCountFormatterCountStyleFile];
+    PDFDocument *pdf = data && FileDataKind(data) == FileKindPDF ? [[PDFDocument alloc] initWithData:data] : nil;
+    if (pdf) { // pages to scroll through, in the space the picture would take at most
+        PDFView *pages = [PDFView new];
+        pages.document = pdf;
+        pages.autoScales = YES;
+        pages.displayMode = kPDFDisplaySinglePageContinuous;
+        pages.backgroundColor = NSColor.clearColor;
+        TBPin(pages, _imageView.superview, NSEdgeInsetsMake(1, 1, 1, 1));
+        _imageView.hidden = YES;
+        _copy.hidden = YES;
+        _info.stringValue = [NSString stringWithFormat:@"PDF · %@ · %@", LN(@"%lu pages", (NSUInteger)pdf.pageCount), size];
+        _width.constant = 520 + 28;
+        _height.constant = 400 + 20;
+        return;
+    }
     NSImage *image = data ? [[NSImage alloc] initWithData:data] : nil;
+    if (!image && data && _name) { // a file of another kind: it can still be saved
+        _copy.hidden = YES;
+        _info.stringValue = [NSString stringWithFormat:L(@"%@ · this kind of file can't be previewed"), size];
+        return;
+    }
     if (!image) {
         _info.stringValue = error.localizedDescription ?: L(@"Couldn't decode the image.");
         _info.textColor = Theme.red;
@@ -154,6 +189,17 @@ void ImageValueLoad(NSString *value, void (^done)(NSData *data, NSError *error))
     _width.constant = MAX(image.size.width * scale + 2, 360) + 28;
     _height.constant = MAX(image.size.height * scale + 2, 271) + 20;
     _copy.enabled = YES;
+}
+
+// Saves the downloaded bytes where the user chooses (no temporary file on the way).
+- (void)saveFile:(id)sender {
+    NSData *data = _data;
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    panel.nameFieldStringValue = _name ?: @"";
+    [panel beginWithCompletionHandler:^(NSModalResponse response) {
+        NSError *error = nil;
+        if (response == NSModalResponseOK && ![data writeToURL:panel.URL options:NSDataWritingAtomic error:&error]) [NSApp presentError:error];
+    }];
 }
 
 - (void)copyImage:(id)sender {

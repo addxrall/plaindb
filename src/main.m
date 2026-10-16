@@ -88,7 +88,7 @@
     MainWindowController *controller = [self controllerWithConnection:source.connection tunnel:source.tunnel info:source.info];
     [source.window addTabbedWindow:controller.window ordered:NSWindowAbove];
     [controller.window makeKeyAndOrderFront:nil];
-    [controller openTableSchema:schema name:table tab:tab];
+    if (table) [controller openTableSchema:schema name:table tab:tab]; // no table: an empty tab to pick one in
     return controller;
 }
 
@@ -198,6 +198,7 @@
     NSMenu *file = [self submenu:L(@"File") in:bar];
     [file addItemWithTitle:L(@"Connections…") action:@selector(showConnections:) keyEquivalent:@"n"];
     [file addItemWithTitle:L(@"Open…") action:@selector(openDocument:) keyEquivalent:@"o"];
+    [file addItemWithTitle:L(@"New Tab") action:@selector(newWindowForTab:) keyEquivalent:@"t"]; // the open table again
     [file addItemWithTitle:L(@"Close Window") action:@selector(performClose:) keyEquivalent:@"w"];
 
     NSMenu *edit = [self submenu:L(@"Edit") in:bar];

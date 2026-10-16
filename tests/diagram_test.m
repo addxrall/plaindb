@@ -76,10 +76,11 @@ int main(void) {
         for (SchemaTable *t in big.tables) all = NSUnionRect(all, t.frame);
         assert(NoOverlaps(big) && NSHeight(all) < 3 * NSWidth(all) && NSWidth(all) < 3 * NSHeight(all));
 
-        // a 40-column table is capped: header, 20 rows and one "+ N more" row
+        // a 40-column table is capped: header, 20 rows and one "+ N more" row, then the design's 6 pt bottom padding
         SchemaGraph *wide = Graph(@{@"wide": @40}, @[]);
         SchemaLayout(wide, nil, @{});
-        assert(NSHeight(Frame(wide, @"wide")) == SchemaHeaderHeight + (SchemaMaxRows + 1) * SchemaRowHeight);
+        assert(NSHeight(Frame(wide, @"wide")) == SchemaHeaderHeight + (SchemaMaxRows + 1) * SchemaRowHeight + 6);
+        assert(NSWidth(Frame(wide, @"wide")) == 220);
 
         // saved positions win; a saved table that no longer exists is ignored; the others don't overlap them
         SchemaLayout(g, nil, @{@"public.claims": [NSValue valueWithPoint:NSMakePoint(40, 40)],
@@ -94,6 +95,9 @@ int main(void) {
         assert(NSMaxX(Frame(n, @"companies")) < NSMinX(Frame(n, @"drivers")));
         assert(NSMaxX(Frame(n, @"drivers")) < NSMinX(Frame(n, @"claims")));
         assert(NoOverlaps(n));
+        // as in the design: every column starts at the top margin, 34 pt between columns
+        assert(NSMinY(Frame(n, @"companies")) == NSMinY(Frame(n, @"drivers")) && NSMinY(Frame(n, @"drivers")) == NSMinY(Frame(n, @"claims")));
+        assert(NSMinY(Frame(n, @"drivers")) == 24 && NSMinX(Frame(n, @"drivers")) - NSMaxX(Frame(n, @"companies")) == 34);
         // a "many" relation (PocketBase multi relation) is an edge marked as such; rows without the column are plain keys
         SchemaGraph *pb = [SchemaGraph graphWithColumns:Rows(@[@[@"main", @"posts", @"id", @"TEXT", @"PK"], @[@"main", @"posts", @"tags", @"JSON", @""],
                                                                 @[@"main", @"tags", @"id", @"TEXT", @"PK"]])

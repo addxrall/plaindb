@@ -14,6 +14,10 @@ void ImageValueLoad(NSString *value, void (^done)(NSData *_Nullable data, NSErro
 // Popover content: the image, scaled down to fit, with its type, size and dimensions, and Copy Image.
 @interface ImagePreview : NSViewController
 - (instancetype)initWithTitle:(NSString *)title value:(NSString *)value;
+// A file fetched by `loader` (S3, PocketBase storage): an image as above, a PDF in a page view, anything else as
+// its name and size; all with Save As…
+- (instancetype)initWithTitle:(NSString *)title name:(nullable NSString *)name
+                       loader:(void (^)(void (^done)(NSData *_Nullable data, NSError *_Nullable error)))loader;
 @end
 
 NS_ASSUME_NONNULL_END

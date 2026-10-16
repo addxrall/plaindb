@@ -61,6 +61,12 @@ NS_ASSUME_NONNULL_BEGIN
 // Cells whose value looks like an image (see ImageValueDetected) get a 🖼 badge; it, double-click and Enter call this.
 @property (nonatomic, copy, nullable) void (^onOpenImage)(NSInteger row, NSInteger column, NSRect cellRect);
 
+// Files kept elsewhere (S3, PocketBase storage): a 🖼 badge calling onOpenFile on every non-empty value of
+// fileColumns, and, with detectsFileKeys, on any value that looks like file keys (see FileKeysInValue).
+@property (nonatomic, copy) NSIndexSet *fileColumns;
+@property (nonatomic) BOOL detectsFileKeys;
+@property (nonatomic, copy, nullable) void (^onOpenFile)(NSInteger row, NSInteger column, NSRect cellRect);
+
 // Double-click / Enter on a cell holding a JSON object or array calls this instead of inline editing.
 @property (nonatomic, copy, nullable) void (^onOpenJSON)(NSInteger row, NSInteger column);
 // Called when the user clicks a cell.

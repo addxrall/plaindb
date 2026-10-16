@@ -9,6 +9,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, readonly) NSColor *changed, *changedDot, *added, *deleted;
 @property (class, readonly) NSColor *red, *green, *orange, *productionBanner, *errorFill, *errorBorder, *editor, *findHighlight;
 @property (class, readonly) NSColor *sqlKeyword, *sqlString, *sqlNumber, *sqlFunction, *sqlComment;
+// Secondary and tertiary text, and boxes drawn on the editor background (diagram tables).
+@property (class, readonly) NSColor *text2, *text3, *box;
 + (NSFont *)mono:(CGFloat)size;
 + (NSColor *)colorFromHex:(nullable NSString *)hex fallback:(NSColor *)fallback;
 @end

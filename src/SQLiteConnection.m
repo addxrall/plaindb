@@ -1,4 +1,5 @@
 #import "SQLiteConnection.h"
+#import "FileRefs.h"
 #import "RemoteSQLite.h"
 #import <sqlite3.h>
 
@@ -479,6 +480,54 @@ static int Progress(void *context) {
          " WHERE json_extract(f.value, '$.type') = 'relation'"
          " ORDER BY 1, 2", DBQuoteIdent(fields)];
     return [self execute:sql params:nil error:NULL].rows ?: @[];
+}
+
+- (NSDictionary *)pocketBaseFilesOfTable:(NSString *)table {
+    NSString *fields = [self pocketBaseFieldsColumn];
+    if (!fields) return nil;
+    NSString *sql = [NSString stringWithFormat:
+        @"SELECT c.id, json_extract(f.value, '$.name'),"
+         " COALESCE(json_extract(f.value, '$.maxSelect'), json_extract(f.value, '$.options.maxSelect'), 1) > 1"
+         " FROM _collections c, json_each(c.%@) f WHERE c.name = $1 AND json_extract(f.value, '$.type') = 'file'", DBQuoteIdent(fields)];
+    NSArray *rows = [self execute:sql params:@[table] error:NULL].rows;
+    if (!rows.count) return nil;
+    NSMutableDictionary *columns = [NSMutableDictionary new];
+    for (NSArray *r in rows) columns[r[1]] = @([r[2] isEqual:@"1"]);
+    NSMutableDictionary *files = [@{@"collection": [NSString stringWithString:rows[0][0]], @"columns": columns} mutableCopy];
+    // only where the files are; the access keys next to them stay in the database
+    NSArray *s3 = [self execute:@"SELECT json_extract(value, '$.s3.bucket'), json_extract(value, '$.s3.region'), json_extract(value, '$.s3.endpoint')"
+                                 " FROM _params WHERE id = 'settings' AND json_valid(value) AND json_extract(value, '$.s3.enabled')"
+                         params:nil error:NULL].rows.firstObject;
+    if ([s3[0] isKindOfClass:NSString.class] && [s3[0] length])
+        files[@"s3"] = @{@"bucket": s3[0], @"region": s3[1] == NSNull.null ? @"" : s3[1], @"endpoint": s3[2] == NSNull.null ? @"" : s3[2]};
+    return files;
+}
+
+- (NSData *)pocketBaseFileInCollection:(NSString *)collection record:(NSString *)record name:(NSString *)name
+                              maxBytes:(NSUInteger)maxBytes error:(NSError **)error {
+    if (!PocketBaseFileNameValid(collection) || !PocketBaseFileNameValid(record) || !PocketBaseFileNameValid(name)) {
+        if (error) *error = DBError(L(@"Not a PocketBase file name."), nil);
+        return nil;
+    }
+    if (_remote) {
+        NSDictionary *answer = [_remote send:@{@"op": @"file", @"collection": collection, @"record": record, @"name": name, @"max": @(maxBytes)} error:error];
+        if (!answer) return nil;
+        if ([answer[@"error"] isKindOfClass:NSString.class]) {
+            if (error) *error = DBError(answer[@"error"], nil);
+            return nil;
+        }
+        return [[NSData alloc] initWithBase64EncodedString:answer[@"data"] ?: @"" options:0];
+    }
+    NSString *storage = [[_path.stringByResolvingSymlinksInPath stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"storage"];
+    NSString *file = [[[[storage stringByAppendingPathComponent:collection] stringByAppendingPathComponent:record]
+                       stringByAppendingPathComponent:name] stringByResolvingSymlinksInPath];
+    NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:file error:NULL];
+    NSString *problem = ![file hasPrefix:[storage.stringByResolvingSymlinksInPath stringByAppendingString:@"/"]] ? L(@"Not a PocketBase file name.")
+                      : ![attributes.fileType isEqual:NSFileTypeRegular] ? L(@"The file isn't in PocketBase's storage.")
+                      : attributes.fileSize > maxBytes ? L(@"The file is too big to preview.") : nil;
+    NSData *data = problem ? nil : [NSData dataWithContentsOfFile:file];
+    if (!data && error) *error = DBError(problem ?: L(@"The file isn't in PocketBase's storage."), nil);
+    return data;
 }
 
 - (DBResult *)indexesInSchema:(NSString *)schema table:(NSString *)table error:(NSError **)error {

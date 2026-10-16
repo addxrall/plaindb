@@ -3,6 +3,17 @@
 <!-- English plurals for LN() in src/. Singular strings need no file: the key is the English text. -->
 <plist version="1.0">
 <dict>
+	<key>%lu pages</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key><string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key><string>lu</string>
+			<key>one</key><string>%lu page</string>
+			<key>other</key><string>%lu pages</string>
+		</dict>
+	</dict>
 	<key>%lu rows</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key><string>%#@n@</string>

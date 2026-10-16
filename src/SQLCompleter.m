@@ -12,7 +12,7 @@ static const NSUInteger VisibleRows = 9;
 @implementation CompletionRowView
 - (void)drawSelectionInRect:(NSRect)dirtyRect {
     [NSColor.controlAccentColor setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 4, 1) xRadius:4 yRadius:4] fill];
+    [[NSBezierPath bezierPathWithRoundedRect:NSInsetRect(self.bounds, 6, 0) xRadius:6 yRadius:6] fill]; // design: 6 pt margin, radius 6
 }
 @end
 
@@ -71,7 +71,7 @@ static const NSUInteger VisibleRows = 9;
     background.material = NSVisualEffectMaterialMenu;
     background.state = NSVisualEffectStateActive;
     background.wantsLayer = YES;
-    background.layer.cornerRadius = 8;
+    background.layer.cornerRadius = 12;
     background.layer.masksToBounds = YES;
     _list = [NSTableView new];
     _list.headerView = nil;
@@ -91,7 +91,7 @@ static const NSUInteger VisibleRows = 9;
     scroll.drawsBackground = NO;
     scroll.hasVerticalScroller = YES;
     scroll.autohidesScrollers = YES;
-    TBPin(scroll, background, NSEdgeInsetsMake(4, 0, 4, 0));
+    TBPin(scroll, background, NSEdgeInsetsMake(6, 0, 6, 0));
     _panel.contentView = background;
 }
 
@@ -118,12 +118,12 @@ static const NSUInteger VisibleRows = 9;
     if (!_panel) [self buildPanel];
     [_list reloadData];
     [_list scrollRowToVisible:0];
-    // under the start of the word, flipped above it near the bottom of the screen
+    // 3 pt under the line, names lined up just right of the word's start (badge first); above it near the bottom
     NSRect word = [view firstRectForCharacterRange:NSMakeRange(replace.location, 0) actualRange:NULL];
-    CGFloat height = RowHeight * MIN(items.count, VisibleRows) + 8;
-    NSRect frame = NSMakeRect(NSMinX(word) - 6, NSMinY(word) - height - 2, ListWidth, height);
+    CGFloat height = RowHeight * MIN(items.count, VisibleRows) + 12;
+    NSRect frame = NSMakeRect(NSMinX(word) - 28, NSMinY(word) - height - 3, ListWidth, height);
     NSRect screen = view.window.screen.visibleFrame;
-    if (NSMinY(frame) < NSMinY(screen)) frame.origin.y = NSMaxY(word) + 2;
+    if (NSMinY(frame) < NSMinY(screen)) frame.origin.y = NSMaxY(word) + 3;
     [_panel setFrame:frame display:YES];
     if (!_panel.isVisible) [view.window addChildWindow:_panel ordered:NSWindowAbove];
 }
@@ -170,6 +170,7 @@ static const NSUInteger VisibleRows = 9;
         return YES;
     }
     if (selector == @selector(insertNewline:) || selector == @selector(insertTab:)) { [self accept]; return YES; }
+    if (selector == @selector(moveLeft:) || selector == @selector(moveRight:)) [self hide]; // and the cursor moves
     if (selector == @selector(cancelOperation:) || selector == @selector(complete:)) { [self hide]; return YES; }
     return NO;
 }
@@ -211,7 +212,7 @@ static const NSUInteger VisibleRows = 9;
     badge.alignment = NSTextAlignmentCenter;
     NSTextField *name = TBLabel(s.text, 12, NSFontWeightRegular, selected ? NSColor.whiteColor : NSColor.labelColor);
     name.font = [Theme mono:12];
-    NSTextField *detail = TBLabel(s.detail, 11, NSFontWeightRegular, selected ? [NSColor colorWithWhite:1 alpha:0.8] : NSColor.tertiaryLabelColor);
+    NSTextField *detail = TBLabel(s.detail, 11, NSFontWeightRegular, selected ? [NSColor colorWithWhite:1 alpha:0.8] : Theme.text3);
     detail.alignment = NSTextAlignmentRight;
     NSView *cell = [NSView new];
     for (NSView *v in @[badge, name, detail]) {
@@ -220,11 +221,11 @@ static const NSUInteger VisibleRows = 9;
     }
     [detail setContentCompressionResistancePriority:NSLayoutPriorityDefaultLow - 1 forOrientation:NSLayoutConstraintOrientationHorizontal];
     [NSLayoutConstraint activateConstraints:@[
-        [badge.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:10],
+        [badge.leadingAnchor constraintEqualToAnchor:cell.leadingAnchor constant:12],
         [badge.widthAnchor constraintEqualToConstant:14],
         [name.leadingAnchor constraintEqualToAnchor:badge.trailingAnchor constant:8],
-        [detail.leadingAnchor constraintGreaterThanOrEqualToAnchor:name.trailingAnchor constant:10],
-        [detail.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-12],
+        [detail.leadingAnchor constraintGreaterThanOrEqualToAnchor:name.trailingAnchor constant:8],
+        [detail.trailingAnchor constraintEqualToAnchor:cell.trailingAnchor constant:-14],
         [badge.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
         [name.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
         [detail.centerYAnchor constraintEqualToAnchor:cell.centerYAnchor],
