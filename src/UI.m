@@ -52,6 +52,19 @@ static NSColor *Dynamic(uint32_t light, uint32_t dark) {
 }
 @end
 
+void TBCopyLocally(NSPasteboard *pasteboard, NSString *text, NSImage *image) {
+    NSPasteboardItem *item = [NSPasteboardItem new];
+    if (text) [item setString:text forType:NSPasteboardTypeString];
+    if (image) {
+        NSData *tiff = image.TIFFRepresentation;
+        [item setData:tiff forType:NSPasteboardTypeTIFF];
+        [item setData:[[NSBitmapImageRep imageRepWithData:tiff] representationUsingType:NSBitmapImageFileTypePNG properties:@{}] forType:NSPasteboardTypePNG];
+    }
+    for (NSString *marker in @[@"org.nspasteboard.ConcealedType", @"org.nspasteboard.TransientType"]) [item setData:[NSData data] forType:marker];
+    [pasteboard prepareForNewContentsWithOptions:NSPasteboardContentsCurrentHostOnly]; // also empties it
+    [pasteboard writeObjects:@[item]];
+}
+
 NSTextField *TBLabel(NSString *text, CGFloat size, NSFontWeight weight, NSColor *color) {
     NSTextField *l = [NSTextField labelWithString:text];
     l.font = [NSFont systemFontOfSize:size weight:weight];

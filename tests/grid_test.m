@@ -1,5 +1,7 @@
 // GridView: swapping in a shorter result while rows are visible must not crash; change model and ⌫ handling.
 #import "GridView.h"
+#import "SQLText.h"
+#import "UI.h"
 #import <assert.h>
 
 @interface GridView (Private)
@@ -175,6 +177,20 @@ int main(void) {
 
         grid.result = Result(@[], 0); // a new result clears changes
         assert(grid.table.numberOfRows == 0 && grid.changeCount == 0);
+        // copies stay on this Mac and are marked so clipboard managers don't keep them (a private pasteboard here)
+        NSPasteboard *board = [NSPasteboard pasteboardWithUniqueName];
+        TBCopyLocally(board, @"anna.kowalska@example.com", nil);
+        assert([[board stringForType:NSPasteboardTypeString] isEqual:@"anna.kowalska@example.com"]);
+        assert([board.types containsObject:@"org.nspasteboard.ConcealedType"] && [board.types containsObject:@"org.nspasteboard.TransientType"]);
+        NSImage *dot = [NSImage imageWithSize:NSMakeSize(2, 2) flipped:NO drawingHandler:^BOOL(NSRect r) { NSRectFill(r); return YES; }];
+        TBCopyLocally(board, nil, dot);
+        assert([board dataForType:NSPasteboardTypePNG].length && ![board stringForType:NSPasteboardTypeString]);
+        assert([board.types containsObject:@"org.nspasteboard.ConcealedType"]);
+        // the SQL editor and JSON text are the text view that copies through it
+        NSTextView *sqlText = nil;
+        SQLTextScrollView(&sqlText, YES, NO);
+        assert([NSStringFromClass(sqlText.class) isEqual:@"LocalCopyTextView"]);
+        [board releaseGlobally];
         puts("grid_test: OK");
     }
     return 0;

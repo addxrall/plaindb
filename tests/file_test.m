@@ -63,6 +63,13 @@ int main(void) {
         assert(([PocketBaseFileNames(@"[\"a_1.jpg\",\"b_2.jpg\"]") isEqual:(@[@"a_1.jpg", @"b_2.jpg"])]));
         for (id v in @[@"", @"[]", NSNull.null, @"[1]"]) assert(PocketBaseFileNames(v).count == 0);
 
+        // AWS profile names from ~/.aws/config ([profile x], [default]) and ~/.aws/credentials ([x]); no other sections, no values
+        NSString *config = @"[default]\nregion = eu-central-1\n\n[profile fleet-backup]\nsso_session = fleet\n\n[sso-session fleet]\nsso_region = eu-central-1\n"
+                            "  [profile  iltrans ]  \n# [profile commented]\n";
+        NSString *credentials = @"[default]\naws_access_key_id = AKIAEXAMPLE\n[ci]\naws_secret_access_key = s3cr3t\n";
+        assert(([AWSProfileNames(config, credentials) isEqual:(@[@"ci", @"default", @"fleet-backup", @"iltrans"])]));
+        assert(AWSProfileNames(nil, nil).count == 0);
+
         // what the bytes are
         assert(FileDataKind([NSData dataWithBytes:"%PDF-1.7\n" length:9]) == FileKindPDF);
         assert(FileDataKind([NSData dataWithBytes:"\x89PNG\r\n\x1a\n...." length:12]) == FileKindImage);
@@ -95,7 +102,21 @@ int main(void) {
         assert(!data && [error.localizedDescription containsString:@"aws sso login --profile fleet"]);
         aws = FakeAWS(dir, @"echo 'fatal error: An error occurred (404) when calling the HeadObject operation: Key \"k/x.pdf\" does not exist' >&2; exit 1");
         Fetch(aws, @"b", @"k/x.pdf", @"", @"", @"", 1024, &data, &error);
-        assert(!data && [error.localizedDescription containsString:@"does not exist"]);
+        assert(!data && [error.localizedDescription containsString:@"s3://b/k/x.pdf"]); // a missing key, said plainly
+        aws = FakeAWS(dir, @"echo 'fatal error: Could not connect to the endpoint URL' >&2; exit 1");
+        Fetch(aws, @"b", @"k/x.pdf", @"", @"", @"", 1024, &data, &error);
+        assert(!data && [error.localizedDescription containsString:@"Could not connect"]); // anything else: aws's own message
+        // refused or missing in S3: said in plain words, naming the profile and the object
+        aws = FakeAWS(dir, @"echo 'download failed: s3://b/k/x.pdf to - An error occurred (403) when calling the HeadObject operation: Forbidden' >&2; exit 1");
+        Fetch(aws, @"b", @"k/x.pdf", @"", @"fleet-backup", @"", 1024, &data, &error);
+        assert(!data && [error.localizedDescription containsString:@"fleet-backup"] && [error.localizedDescription containsString:@"s3://b/k/x.pdf"]
+               && [error.localizedDescription containsString:@"s3:GetObject"]);
+        aws = FakeAWS(dir, @"echo 'download failed: s3://b/k/x.pdf to - An error occurred (404) when calling the HeadObject operation: Not Found' >&2; exit 1");
+        Fetch(aws, @"b", @"k/x.pdf", @"", @"", @"", 1024, &data, &error);
+        assert(!data && [error.localizedDescription containsString:@"s3://b/k/x.pdf"] && ![error.localizedDescription containsString:@"HeadObject"]);
+        aws = FakeAWS(dir, @"echo 'Unable to locate credentials. You can configure credentials by running \"aws configure\".' >&2; exit 255");
+        Fetch(aws, @"b", @"k/x.pdf", @"", @"", @"", 1024, &data, &error);
+        assert(!data && [error.localizedDescription containsString:@"default"]);
         // too big: stopped, not read into memory
         aws = FakeAWS(dir, @"head -c 5000 /dev/zero");
         Fetch(aws, @"b", @"k/x.pdf", @"", @"", @"", 1024, &data, &error);

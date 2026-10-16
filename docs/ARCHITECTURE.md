@@ -20,7 +20,7 @@
 | `src/SSHTunnel.m` | `ssh -N -L` via `NSTask`, waiting for the port, reconnecting |
 | `src/Connector.m` | `TBConnect`: tunnel (if any) plus database connection in the background, used by the Connections window, the toolbar switcher and for files |
 | `src/ConnectionStore.m` | plist in `~/Library/Application Support/PlainDB/connections.plist` and the Keychain (service `PlainDB`); falls back to data saved under the old name `Tabula`; recent SQLite files in user defaults |
-| `src/UI.h/.m` | design tokens (`Theme`, light and dark), small view helpers, `TBRowView`, `TBCellView`, `TBToolButton` (the design's 26 × 22 pt icon button), `TBFlippedView` |
+| `src/UI.h/.m` | design tokens (`Theme`, light and dark), `TBCopyLocally` (pasteboard for this Mac only, marked concealed), small view helpers, `TBRowView`, `TBCellView`, `TBToolButton` (the design's 26 × 22 pt icon button), `TBFlippedView` |
 | `src/GridView.m` | grid for a `DBResult` (row numbers, numeric alignment, change colours); collects unsaved changes in the Data tab. Cells are `GridCellView`s that draw themselves (see DECISIONS.md, "Grid cells draw themselves"), including the boolean checkbox and the ↗ / 🖼 badge; a click is matched against where the cell last drew its badge |
 | `src/SQLCompletion.m` | what the SQL editor offers at the cursor (pure; tables, aliases, columns, functions, keywords) |
 | `src/SQLCompleter.m` | the completion list under the cursor: the editor's delegate, keys, the list window |

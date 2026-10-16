@@ -168,14 +168,19 @@ void ImageValueLoad(NSString *value, void (^done)(NSData *data, NSError *error))
         return;
     }
     NSImage *image = data ? [[NSImage alloc] initWithData:data] : nil;
+    if (!image && _name) _copy.hidden = YES; // a file that isn't a picture (or didn't load): nothing to copy as an image
     if (!image && data && _name) { // a file of another kind: it can still be saved
         _copy.hidden = YES;
         _info.stringValue = [NSString stringWithFormat:L(@"%@ · this kind of file can't be previewed"), size];
         return;
     }
-    if (!image) {
+    if (!image) { // the whole message, wrapped and selectable: it can hold a long path on the server
         _info.stringValue = error.localizedDescription ?: L(@"Couldn't decode the image.");
         _info.textColor = Theme.red;
+        _info.lineBreakMode = NSLineBreakByCharWrapping;
+        _info.maximumNumberOfLines = 0;
+        _info.preferredMaxLayoutWidth = _width.constant - 28;
+        _info.selectable = YES;
         return;
     }
     _image = image;
@@ -194,6 +199,15 @@ void ImageValueLoad(NSString *value, void (^done)(NSData *data, NSError *error))
 // Saves the downloaded bytes where the user chooses (no temporary file on the way).
 - (void)saveFile:(id)sender {
     NSData *data = _data;
+    if (self.confirmsSave) {
+        NSAlert *alert = [NSAlert new];
+        alert.alertStyle = NSAlertStyleWarning;
+        alert.messageText = [NSString stringWithFormat:L(@"Save %@ from the production database to this Mac?"), _name ?: @""];
+        alert.informativeText = L(@"A copy on disk is outside the database's protection: Spotlight, backups and anyone with access to this Mac can see it.");
+        [alert addButtonWithTitle:L(@"Save…")];
+        [alert addButtonWithTitle:L(@"Cancel")];
+        if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    }
     NSSavePanel *panel = [NSSavePanel savePanel];
     panel.nameFieldStringValue = _name ?: @"";
     [panel beginWithCompletionHandler:^(NSModalResponse response) {
@@ -203,8 +217,7 @@ void ImageValueLoad(NSString *value, void (^done)(NSData *data, NSError *error))
 }
 
 - (void)copyImage:(id)sender {
-    [NSPasteboard.generalPasteboard clearContents];
-    [NSPasteboard.generalPasteboard writeObjects:@[_image]];
+    TBCopyLocally(NSPasteboard.generalPasteboard, nil, _image);
 }
 
 @end

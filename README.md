@@ -124,7 +124,8 @@ UI strings are written in English in the code (`L(@"…")`, plurals with `LN(@"%
 
 ## Known limitations
 
-- File previews need the AWS CLI (`brew install awscli`) for S3, are capped at 50 MB (20 MB from PocketBase storage), and can't show files the application encrypted itself.
+- File previews need the AWS CLI (`brew install awscli`) for S3, are capped at 50 MB (20 MB from PocketBase storage), and can't show files the application encrypted itself. The AWS profile only needs `s3:GetObject` on the bucket (plus `kms:Decrypt` with SSE-KMS); an SSO profile gives short-lived credentials.
+- What PlainDB copies (cells, rows, images, SQL) stays on this Mac: it isn't sent to other devices through Universal Clipboard and is marked so clipboard managers don't record it. On production connections, saving a previewed file to disk asks first.
 
 - After each rebuild macOS may ask for Keychain access, because the app's signature changes. Choose "Always Allow".
 - The SQL tab loads the whole result into memory. Add a `LIMIT` for huge tables.

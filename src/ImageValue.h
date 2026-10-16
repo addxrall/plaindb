@@ -18,6 +18,8 @@ void ImageValueLoad(NSString *value, void (^done)(NSData *_Nullable data, NSErro
 // its name and size; all with Save As…
 - (instancetype)initWithTitle:(NSString *)title name:(nullable NSString *)name
                        loader:(void (^)(void (^done)(NSData *_Nullable data, NSError *_Nullable error)))loader;
+// Production: Save As… asks first, since the file then leaves the database's protection for this Mac's disk.
+@property (nonatomic) BOOL confirmsSave;
 @end
 
 NS_ASSUME_NONNULL_END

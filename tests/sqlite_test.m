@@ -225,6 +225,24 @@ static void Run(NSString *label, Maker make) {
     }
     err = nil;
     assert(![pb pocketBaseFileInCollection:@"u1" record:@"abc" name:@"face_x1.png" maxBytes:8 error:&err] && err); // too big
+    // a missing file says where it was looked for; no storage folder or no permission say so
+    err = nil;
+    assert(![pb pocketBaseFileInCollection:@"u1" record:@"abc" name:@"missing.png" maxBytes:1024 error:&err]);
+    assert([err.localizedDescription containsString:[dir.stringByResolvingSymlinksInPath stringByAppendingPathComponent:@"storage/u1/abc/missing.png"]]);
+    err = nil;
+    assert(![pb pocketBaseFileInCollection:@"u9" record:@"abc" name:@"x.png" maxBytes:1024 error:&err] && [err.localizedDescription containsString:@"storage/u9/abc/x.png"]);
+    NSString *locked = [dir stringByAppendingPathComponent:@"storage/u1/locked"];
+    [NSFileManager.defaultManager createDirectoryAtPath:locked withIntermediateDirectories:YES attributes:nil error:NULL];
+    [picture writeToFile:[locked stringByAppendingPathComponent:@"secret.png"] atomically:YES];
+    [NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions: @0} ofItemAtPath:locked error:NULL];
+    err = nil;
+    assert(![pb pocketBaseFileInCollection:@"u1" record:@"locked" name:@"secret.png" maxBytes:1024 error:&err]);
+    assert([err.localizedDescription.lowercaseString containsString:@"permission"]);
+    [NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions: @0755} ofItemAtPath:locked error:NULL];
+    // encrypted settings (PocketBase's --encryptionEnv): where the files are is unknown, and said so
+    assert([pb execute:@"UPDATE _params SET value = 'q83vEjRWeJA=' WHERE id = 'settings'" params:nil error:&err]);
+    files = [pb pocketBaseFilesOfTable:@"users"];
+    assert(!files[@"s3"] && [files[@"settingsUnreadable"] isEqual:@YES]);
     [pb close];
 
     // read-only: refused with 25006, allowed in a write transaction, read-only again afterwards

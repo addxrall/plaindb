@@ -15,6 +15,10 @@ NS_ASSUME_NONNULL_BEGIN
 + (NSColor *)colorFromHex:(nullable NSString *)hex fallback:(NSColor *)fallback;
 @end
 
+// Copies text or an image for this Mac only: not to other devices through Universal Clipboard, and marked
+// (nspasteboard.org Concealed / Transient) so clipboard managers don't keep a history of database values.
+void TBCopyLocally(NSPasteboard *pasteboard, NSString *_Nullable text, NSImage *_Nullable image);
+
 NSTextField *TBLabel(NSString *text, CGFloat size, NSFontWeight weight, NSColor *color);
 NSTextField *TBWrappingLabel(NSString *text, CGFloat size, NSColor *color);
 NSButton *TBButton(NSString *title, id target, SEL action);

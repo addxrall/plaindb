@@ -80,12 +80,28 @@ void SQLHighlight(NSTextStorage *storage) {
 }
 @end
 
+// Copy and cut put the selection on the clipboard for this Mac only (see TBCopyLocally); drags and Services, which
+// use other pasteboards, work as usual.
+@interface LocalCopyTextView : NSTextView
+@end
+
+@implementation LocalCopyTextView
+- (BOOL)writeSelectionToPasteboard:(NSPasteboard *)pasteboard types:(NSArray<NSPasteboardType> *)types {
+    if (pasteboard != NSPasteboard.generalPasteboard) return [super writeSelectionToPasteboard:pasteboard types:types];
+    NSMutableString *text = [NSMutableString new];
+    for (NSValue *range in self.selectedRanges) [text appendString:[self.string substringWithRange:range.rangeValue]];
+    TBCopyLocally(pasteboard, text, nil);
+    return YES;
+}
+@end
+
 NSScrollView *SQLTextScrollView(NSTextView **textView, BOOL editable, BOOL lineNumbers) {
     static SQLHighlighter *highlighter;
     if (!highlighter) highlighter = [SQLHighlighter new];
 
-    NSScrollView *scroll = [NSTextView scrollableTextView];
+    NSScrollView *scroll = [LocalCopyTextView scrollableTextView];
     NSTextView *t = scroll.documentView;
+    NSCAssert([t isKindOfClass:LocalCopyTextView.class], @"scrollableTextView makes a text view of the receiving class");
     t.font = [Theme mono:12.5];
     t.richText = NO;
     t.editable = editable;

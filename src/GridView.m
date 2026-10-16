@@ -707,9 +707,7 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
 }
 
 - (void)copyValue:(id)sender {
-    [NSPasteboard.generalPasteboard clearContents];
-    [NSPasteboard.generalPasteboard setString:[self textAtRow:_table.clickedRow column:[self dataColumn:_table.clickedColumn]]
-                                      forType:NSPasteboardTypeString];
+    TBCopyLocally(NSPasteboard.generalPasteboard, [self textAtRow:_table.clickedRow column:[self dataColumn:_table.clickedColumn]], nil);
 }
 
 // ⌘C: selected rows as tab-separated text, ready to paste into a spreadsheet.
@@ -721,8 +719,7 @@ static void DrawCheckbox(BOOL on, NSRect r, BOOL dark) {
         for (NSUInteger c = 0; c < columns; c++) [cells addObject:[self textAtRow:row column:c]];
         [lines addObject:[cells componentsJoinedByString:@"\t"]];
     }];
-    [NSPasteboard.generalPasteboard clearContents];
-    [NSPasteboard.generalPasteboard setString:[lines componentsJoinedByString:@"\n"] forType:NSPasteboardTypeString];
+    TBCopyLocally(NSPasteboard.generalPasteboard, [lines componentsJoinedByString:@"\n"], nil);
 }
 
 - (void)setNull:(id)sender {

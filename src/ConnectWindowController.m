@@ -1,6 +1,7 @@
 #import "ConnectWindowController.h"
 #import "ConnectionStore.h"
 #import "Connector.h"
+#import "FileRefs.h"
 #import "PGConnection.h"
 #import "SSHTunnel.h"
 #import "UI.h"
@@ -171,7 +172,7 @@ static NSArray<NSArray<NSString *> *> *FieldSpec(void) {
         @[@"path", L(@"File on server:"), @"/home/pocketbase/pb_data/data.db"],
         @[@"s3Bucket", L(@"S3 files:"), L(@"bucket")],
         @[@"s3Region", L(@"Region:"), @"eu-central-1"],
-        @[@"awsProfile", L(@"Profile:"), L(@"AWS profile")],
+        @[@"awsProfile", L(@"Profile:"), L(@"default profile")],
     ];
 }
 
@@ -308,7 +309,7 @@ static BOOL IsRemoteSQLite(NSDictionary *c) {
     NSMutableDictionary *fields = [NSMutableDictionary new];
     NSMutableDictionary *labels = [NSMutableDictionary new];
     for (NSArray *spec in FieldSpec()) {
-        NSTextField *f = [spec[0] isEqual:@"password"] ? [NSSecureTextField new] : [NSTextField new];
+        NSTextField *f = [spec[0] isEqual:@"password"] ? [NSSecureTextField new] : [spec[0] isEqual:@"awsProfile"] ? [NSComboBox new] : [NSTextField new];
         f.placeholderString = spec[2];
         fields[spec[0]] = f;
         labels[spec[0]] = [NSTextField labelWithString:spec[1]];
@@ -328,12 +329,20 @@ static BOOL IsRemoteSQLite(NSDictionary *c) {
     NSStackView *pathColumn = TBColumn(@[_fields[@"path"], pathHint], nil);
     pathColumn.spacing = 4;
     // where the files that rows point to live: previews through the user's aws CLI and profile
-    [_fields[@"s3Region"].widthAnchor constraintEqualToConstant:104].active = YES;
-    [_fields[@"awsProfile"].widthAnchor constraintEqualToConstant:96].active = YES;
-    NSStackView *s3Row = [NSStackView stackViewWithViews:@[_fields[@"s3Bucket"], _fields[@"s3Region"], _fields[@"awsProfile"]]];
-    s3Row.spacing = 8;
+    [_fields[@"s3Region"].widthAnchor constraintEqualToConstant:98].active = YES;
+    [_fields[@"awsProfile"].widthAnchor constraintEqualToConstant:140].active = YES;
+    NSComboBox *profiles = (NSComboBox *)_fields[@"awsProfile"]; // the profiles set up for the aws CLI; another can be typed
+    [profiles addItemsWithObjectValues:AWSProfiles()];
+    profiles.completes = YES;
+    NSStackView *s3Fields = [NSStackView stackViewWithViews:@[_fields[@"s3Bucket"], _fields[@"s3Region"], profiles]];
+    s3Fields.spacing = 8;
     _fields[@"s3Region"].toolTip = L(@"Region:");
-    _fields[@"awsProfile"].toolTip = L(@"AWS profile from ~/.aws/config; empty: the default one.");
+    profiles.toolTip = L(@"AWS profile from ~/.aws/config; empty: the default one.");
+    NSTextField *s3Hint = TBWrappingLabel(L(@"For previews of files in S3: the bucket, its region and the AWS profile (from ~/.aws/config) that can read it; empty profile: the default one."),
+                                          11, NSColor.secondaryLabelColor);
+    s3Hint.preferredMaxLayoutWidth = 340;
+    NSStackView *s3Row = TBColumn(@[s3Fields, s3Hint], nil);
+    s3Row.spacing = 4;
     _kindSwitch = [NSSegmentedControl segmentedControlWithLabels:@[L(@"PostgreSQL"), L(@"SQLite over SSH")]
                                                     trackingMode:NSSegmentSwitchTrackingSelectOne target:self action:@selector(kindChanged:)];
     _kindSwitch.font = [NSFont systemFontOfSize:12]; // design: 28 pt high, 12 pt labels

@@ -1091,6 +1091,7 @@ static NSString *const DiagramPositionsKey = @"diagramPositions"; // {identity: 
         ImagePreview *preview = [[ImagePreview alloc] initWithTitle:title name:file.lastPathComponent loader:^(void (^done)(NSData *, NSError *)) {
             [weakSelf loadFile:file pocketBase:pb record:record done:done];
         }];
+        preview.confirmsSave = [weakSelf isProduction];
         [weakSelf showPopover:preview rect:rect inView:grid.table];
     };
     if (files.count == 1) return open(files[0]);
@@ -1123,6 +1124,9 @@ static const NSUInteger S3PreviewLimit = 50 << 20, StoragePreviewLimit = 20 << 2
         dispatch_async(conn.queue, ^{
             NSError *error = nil;
             NSData *data = [conn pocketBaseFileInCollection:pb[@"collection"] record:record name:file maxBytes:StoragePreviewLimit error:&error];
+            if (!data && [pb[@"settingsUnreadable"] boolValue]) // maybe the files are in S3 and the settings just don't say so
+                error = DBError([NSString stringWithFormat:@"%@\n%@", error.localizedDescription,
+                                 L(@"PocketBase's settings are encrypted, so PlainDB can't tell whether its files are in S3. If they are, set the bucket under S3 files in the connection.")], nil);
             dispatch_async(dispatch_get_main_queue(), ^{ done(data, error); });
         });
         return;
@@ -1534,8 +1538,7 @@ static const NSUInteger S3PreviewLimit = 50 << 20, StoragePreviewLimit = 20 << 2
 }
 
 - (void)copyTruncateName:(id)sender {
-    [NSPasteboard.generalPasteboard clearContents];
-    [NSPasteboard.generalPasteboard setString:_truncateName forType:NSPasteboardTypeString];
+    TBCopyLocally(NSPasteboard.generalPasteboard, _truncateName, nil);
     _truncateCopy.title = L(@"Copied");
 }
 

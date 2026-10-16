@@ -22,6 +22,12 @@ NSArray<NSString *> *PocketBaseFileNames(id _Nullable value);
 typedef NS_ENUM(NSInteger, FileKind) { FileKindOther, FileKindImage, FileKindPDF };
 FileKind FileDataKind(NSData *data);
 
+// Profile names, sorted, from the texts of ~/.aws/config ("[profile name]", "[default]") and ~/.aws/credentials
+// ("[name]"); other sections and all values are skipped.
+NSArray<NSString *> *AWSProfileNames(NSString *_Nullable config, NSString *_Nullable credentials);
+// The same read from the user's ~/.aws files.
+NSArray<NSString *> *AWSProfiles(void);
+
 // The aws CLI, where Homebrew or the installer put it; nil if missing.
 NSString *_Nullable FileAWSExecutable(void);
 

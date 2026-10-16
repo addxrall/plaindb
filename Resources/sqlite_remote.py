@@ -172,19 +172,36 @@ def execute(con, request):
 FILE_NAME = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
 
 
+class FileProblem(Exception):
+    """Why a storage file can't be read: a code PlainDB words in the user's language, and the path concerned."""
+
+    def __init__(self, code, path=""):
+        super().__init__(code)
+        self.code, self.path = code, path
+
+
 def read_file(path, request):
     """A file from PocketBase's storage next to the database: pb_data/storage/<collection>/<record>/<name>."""
     names = [request.get("collection"), request.get("record"), request.get("name")]
     if not all(isinstance(n, str) and len(n) < 256 and FILE_NAME.match(n) for n in names):
-        raise ValueError("Not a PocketBase file name.")
+        raise FileProblem("badname")
     storage = os.path.join(os.path.dirname(os.path.realpath(path)), "storage")
-    file = os.path.realpath(os.path.join(storage, *names))
-    if not file.startswith(os.path.realpath(storage) + os.sep):
-        raise ValueError("Not a PocketBase file name.")
+    if not os.path.isdir(storage):
+        raise FileProblem("nostorage", storage)
+    storage = os.path.realpath(storage)
+    wanted = os.path.join(storage, *names)
+    for folder in (storage, os.path.join(storage, names[0]), os.path.join(storage, names[0], names[1])):
+        if os.path.isdir(folder) and not os.access(folder, os.R_OK | os.X_OK):
+            raise FileProblem("permission", folder)
+    file = os.path.realpath(wanted)
+    if not file.startswith(storage + os.sep):
+        raise FileProblem("badname")
     if not os.path.isfile(file):
-        raise ValueError("The file isn't in PocketBase's storage.")
+        raise FileProblem("notfound", wanted)
+    if not os.access(file, os.R_OK):
+        raise FileProblem("permission", file)
     if os.path.getsize(file) > int(request.get("max") or 0):
-        raise ValueError("The file is too big to preview.")
+        raise FileProblem("toobig", file)
     with open(file, "rb") as f:
         return {"data": base64.b64encode(f.read()).decode("ascii")}
 
@@ -225,6 +242,8 @@ def main():
                 answer.update(read_file(config["path"], request))
             else:
                 answer.update(execute(con, request))
+        except FileProblem as e:
+            answer.update({"error": e.code, "code": e.code, "path": e.path})
         except Exception as e:
             answer.update({"error": str(e), "code": error_code(e)})
         send(answer)

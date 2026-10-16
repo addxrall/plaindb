@@ -2,6 +2,7 @@
 #import "FileRefs.h"
 #import "RemoteSQLite.h"
 #import <sqlite3.h>
+#import <unistd.h>
 
 NSString *const SQLiteRemoteBootstrap = @"import sys,base64;exec(base64.b64decode(sys.stdin.readline()))";
 
@@ -94,6 +95,19 @@ static void LikeFunction(sqlite3_context *context, int argc, sqlite3_value **arg
         free(s);
         free(p);
     }
+}
+
+// Why a PocketBase storage file can't be read (codes from read_file in the helper, and the local check), worded for
+// the user, with the path it concerns.
+static NSString *FileProblemMessage(NSString *code, NSString *path) {
+    if (![code isKindOfClass:NSString.class]) return nil;
+    path = [path isKindOfClass:NSString.class] ? path : @"";
+    if ([code isEqual:@"badname"]) return L(@"Not a PocketBase file name.");
+    if ([code isEqual:@"nostorage"]) return [NSString stringWithFormat:L(@"PocketBase's storage folder wasn't found: %@"), path];
+    if ([code isEqual:@"permission"]) return [NSString stringWithFormat:L(@"No permission to read %@"), path];
+    if ([code isEqual:@"notfound"]) return [NSString stringWithFormat:L(@"The file isn't in PocketBase's storage: %@"), path];
+    if ([code isEqual:@"toobig"]) return L(@"The file is too big to preview.");
+    return nil;
 }
 
 // The helper's value tags (see Resources/sqlite_remote.py) ↔ what a local connection reads and binds.
@@ -500,6 +514,9 @@ static int Progress(void *context) {
                          params:nil error:NULL].rows.firstObject;
     if ([s3[0] isKindOfClass:NSString.class] && [s3[0] length])
         files[@"s3"] = @{@"bucket": s3[0], @"region": s3[1] == NSNull.null ? @"" : s3[1], @"endpoint": s3[2] == NSNull.null ? @"" : s3[2]};
+    // encrypted settings (PocketBase started with --encryptionEnv): whether files are in S3 can't be read
+    if ([[self execute:@"SELECT 1 FROM _params WHERE id = 'settings' AND NOT json_valid(value)" params:nil error:NULL].rows count])
+        files[@"settingsUnreadable"] = @YES;
     return files;
 }
 
@@ -513,20 +530,30 @@ static int Progress(void *context) {
         NSDictionary *answer = [_remote send:@{@"op": @"file", @"collection": collection, @"record": record, @"name": name, @"max": @(maxBytes)} error:error];
         if (!answer) return nil;
         if ([answer[@"error"] isKindOfClass:NSString.class]) {
-            if (error) *error = DBError(answer[@"error"], nil);
+            if (error) *error = DBError(FileProblemMessage(answer[@"code"], answer[@"path"]) ?: answer[@"error"], nil);
             return nil;
         }
         return [[NSData alloc] initWithBase64EncodedString:answer[@"data"] ?: @"" options:0];
     }
+    // the same checks as the helper's read_file, so both say why a file can't be read, and where
+    NSFileManager *files = NSFileManager.defaultManager;
     NSString *storage = [[_path.stringByResolvingSymlinksInPath stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"storage"];
-    NSString *file = [[[[storage stringByAppendingPathComponent:collection] stringByAppendingPathComponent:record]
-                       stringByAppendingPathComponent:name] stringByResolvingSymlinksInPath];
-    NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:file error:NULL];
-    NSString *problem = ![file hasPrefix:[storage.stringByResolvingSymlinksInPath stringByAppendingString:@"/"]] ? L(@"Not a PocketBase file name.")
-                      : ![attributes.fileType isEqual:NSFileTypeRegular] ? L(@"The file isn't in PocketBase's storage.")
-                      : attributes.fileSize > maxBytes ? L(@"The file is too big to preview.") : nil;
-    NSData *data = problem ? nil : [NSData dataWithContentsOfFile:file];
-    if (!data && error) *error = DBError(problem ?: L(@"The file isn't in PocketBase's storage."), nil);
+    BOOL folder = NO;
+    NSString *code = nil, *where = nil;
+    if (![files fileExistsAtPath:storage isDirectory:&folder] || !folder) code = @"nostorage", where = storage;
+    storage = storage.stringByResolvingSymlinksInPath;
+    NSString *wanted = [[[storage stringByAppendingPathComponent:collection] stringByAppendingPathComponent:record] stringByAppendingPathComponent:name];
+    for (NSString *dir in @[storage, [storage stringByAppendingPathComponent:collection], wanted.stringByDeletingLastPathComponent])
+        if (!code && [files fileExistsAtPath:dir isDirectory:&folder] && folder && access(dir.fileSystemRepresentation, R_OK | X_OK) != 0)
+            code = @"permission", where = dir;
+    NSString *file = wanted.stringByResolvingSymlinksInPath;
+    NSDictionary *attributes = code ? nil : [files attributesOfItemAtPath:file error:NULL];
+    if (!code && ![file hasPrefix:[storage stringByAppendingString:@"/"]]) code = @"badname";
+    else if (!code && ![attributes.fileType isEqual:NSFileTypeRegular]) code = @"notfound", where = wanted;
+    else if (!code && access(file.fileSystemRepresentation, R_OK) != 0) code = @"permission", where = file;
+    else if (!code && attributes.fileSize > maxBytes) code = @"toobig", where = file;
+    NSData *data = code ? nil : [NSData dataWithContentsOfFile:file];
+    if (!data && error) *error = DBError(FileProblemMessage(code ?: @"notfound", where ?: wanted), nil);
     return data;
 }
 

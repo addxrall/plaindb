@@ -90,19 +90,50 @@ FileKind FileDataKind(NSData *data) {
     return FileKindOther;
 }
 
+NSArray<NSString *> *AWSProfileNames(NSString *config, NSString *credentials) {
+    NSMutableSet *names = [NSMutableSet new];
+    for (NSArray *file in @[@[config ?: @"", @YES], @[credentials ?: @"", @NO]]) {
+        for (NSString *raw in [file[0] componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+            NSString *line = [raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+            if (![line hasPrefix:@"["] || ![line hasSuffix:@"]"]) continue;
+            NSString *section = [[line substringWithRange:NSMakeRange(1, line.length - 2)] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+            if ([file[1] boolValue]) { // config: "default" or "profile <name>"; sso-session and others aren't profiles
+                if ([section hasPrefix:@"profile "]) section = [[section substringFromIndex:8] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+                else if (![section isEqual:@"default"]) continue;
+            }
+            if (section.length) [names addObject:section];
+        }
+    }
+    return [names.allObjects sortedArrayUsingSelector:@selector(compare:)];
+}
+
+NSArray<NSString *> *AWSProfiles(void) {
+    NSString *aws = [NSHomeDirectory() stringByAppendingPathComponent:@".aws"];
+    return AWSProfileNames([NSString stringWithContentsOfFile:[aws stringByAppendingPathComponent:@"config"] encoding:NSUTF8StringEncoding error:NULL],
+                           [NSString stringWithContentsOfFile:[aws stringByAppendingPathComponent:@"credentials"] encoding:NSUTF8StringEncoding error:NULL]);
+}
+
 NSString *FileAWSExecutable(void) {
     for (NSString *path in @[@"/opt/homebrew/bin/aws", @"/usr/local/bin/aws", @"/usr/bin/aws"])
         if ([NSFileManager.defaultManager isExecutableFileAtPath:path]) return path;
     return nil;
 }
 
-static NSError *AWSError(NSString *stderrText, int status, NSString *profile) {
+// aws's message, or plain words for the usual reasons: an expired SSO session, no access, no such object, no credentials.
+static NSError *AWSError(NSString *stderrText, int status, NSString *profile, NSString *url) {
     NSString *text = [stderrText stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     NSString *lower = text.lowercaseString;
+    NSString *who = profile.length ? profile : L(@"default");
     if ([lower containsString:@"sso"] && ([lower containsString:@"expired"] || [lower containsString:@"token"])) {
         NSString *command = profile.length ? [@"aws sso login --profile " stringByAppendingString:profile] : @"aws sso login";
         return DBError([NSString stringWithFormat:L(@"The AWS session has expired. Run %@ in Terminal and try again."), command], nil);
     }
+    if ([lower containsString:@"(403)"] || [lower containsString:@"forbidden"] || [lower containsString:@"accessdenied"] || [lower containsString:@"access denied"])
+        return DBError([NSString stringWithFormat:L(@"AWS refused access to %@: the profile %@ can't read it. Give it s3:GetObject on the bucket, or choose another profile in the connection."), url, who], nil);
+    if ([lower containsString:@"(404)"] || [lower containsString:@"not found"] || [lower containsString:@"nosuchkey"])
+        return DBError([NSString stringWithFormat:L(@"There's no such file in S3: %@"), url], nil);
+    if ([lower containsString:@"unable to locate credentials"] || [lower containsString:@"could not be found"] || [lower containsString:@"missing required configuration"])
+        return DBError([NSString stringWithFormat:L(@"The AWS profile %@ has no working credentials. Set it up with aws configure (or aws configure sso), or choose another profile. %@"), who, text], nil);
     return DBError(text.length ? text : [NSString stringWithFormat:L(@"aws ended with status %d."), status], nil);
 }
 
@@ -153,7 +184,7 @@ void FileS3Fetch(NSString *aws, NSString *bucket, NSString *key, NSString *regio
         if (task.terminationStatus != 0) {
             NSString *text;
             @synchronized (stderrData) { text = [[NSString alloc] initWithData:stderrData encoding:NSUTF8StringEncoding] ?: @""; }
-            return finish(nil, AWSError(text, task.terminationStatus, profile));
+            return finish(nil, AWSError(text, task.terminationStatus, profile, [NSString stringWithFormat:@"s3://%@/%@", bucket, key]));
         }
         finish(data, nil);
     });
