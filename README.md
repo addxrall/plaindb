@@ -61,7 +61,7 @@ PlainDB is written in Objective-C and AppKit, with no Electron and no web views.
 </p>
 
 - Every table with its columns and foreign key arrows, referenced tables on the left. "Show on Diagram" in the sidebar (or a double-click on a box) shows just a table and its neighbours.
-- Drag boxes (positions are remembered), zoom with a pinch or ⌘+ / ⌘− / ⌘0, export the whole diagram as PNG or PDF.
+- Drag boxes (positions are remembered). Move around by dragging the background or with the middle mouse button; zoom with a pinch, ⌘ + mouse wheel (around the cursor) or ⌘+ / ⌘− / ⌘0. Export the whole diagram as PNG or PDF.
 - A click only selects a box; open a table from its menu or with "Open Table".
 - From the same menu, "Add Column…" and "Add Foreign Key…" show the exact SQL before running it in a transaction.
 

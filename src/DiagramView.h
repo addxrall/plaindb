@@ -6,6 +6,7 @@ NS_ASSUME_NONNULL_BEGIN
 // Draws a laid-out SchemaGraph: boxes with columns, and foreign key arrows from the key column to the referenced
 // table. Put it in a scroll view with magnification. A click selects a box (it and its arrows are highlighted), a
 // drag moves it, a double-click asks for its neighbours; opening a table only goes through the box's menu.
+// Dragging the background or dragging with the middle button pans; ⌘ + mouse wheel zooms around the cursor.
 @interface DiagramView : NSView
 @property (nonatomic, strong, nullable) SchemaGraph *graph;
 @property (nonatomic, weak, nullable) SchemaTable *selected;

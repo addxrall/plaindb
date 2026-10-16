@@ -28,7 +28,7 @@
 | `src/ImageValue.m` | image detection and decoding for cell values, and the image preview popover |
 | `src/SchemaGraph.m` | the diagram's model and layout, without AppKit: tables, foreign key edges, `SchemaLayout` (ranks by references, ordering by neighbours, saved positions, neighbours mode) |
 | `src/SchemaSheets.m` | "Add Column…" / "Add Foreign Key…" sheets: form, live SQL preview, database errors in place |
-| `src/DiagramView.m` | draws the diagram (boxes, arrows) and handles selection, dragging, the box menu and zoom keys |
+| `src/DiagramView.m` | draws the diagram (boxes, arrows) and handles selection, dragging, panning (background or middle button), the box menu, zoom keys and ⌘-wheel zoom |
 | `src/JSONInspector.m` | JSON side panel (an `NSSplitViewController` inspector item): tree and text modes; order-keeping JSON parser, pretty-printer and minifier |
 | `src/ConnectWindowController.m` | start window: Local tab (grid of databases on the local server), Saved tab (list, form, production frame colour) and Files tab (recent SQLite files); files dropped on it open |
 | `src/MainWindowController.m` | connection window: sidebar, toolbar tabs Data / Structure / SQL, pending changes bar, status bar |

@@ -12,6 +12,8 @@ static BOOL IsDefaultSchema(NSString *schema) {
     NSPoint _grab;    // where in the dragged box the mouse went down
     BOOL _didDrag;
     NSString *_menuColumn; // the column row the box menu was opened on
+    BOOL _panning;
+    NSPoint _panStart, _panOrigin; // where the pan began, in window coordinates, and the clip view's origin then
 }
 
 - (BOOL)isFlipped {
@@ -200,12 +202,14 @@ static CGFloat RowY(SchemaTable *t, NSString *column) {
     }
     self.selected = hit;
     if (self.onSelect) self.onSelect(hit);
+    if (!hit) return [self beginPan:event];
     _dragged = hit;
     _grab = NSMakePoint(p.x - NSMinX(hit.frame), p.y - NSMinY(hit.frame));
     _didDrag = NO;
 }
 
 - (void)mouseDragged:(NSEvent *)event {
+    if (_panning) return [self panTo:event];
     if (!_dragged) return;
     NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
     NSRect frame = _dragged.frame;
@@ -218,8 +222,74 @@ static CGFloat RowY(SchemaTable *t, NSString *column) {
 }
 
 - (void)mouseUp:(NSEvent *)event {
+    if (_panning) return [self endPan:event];
     if (_dragged && _didDrag && self.onMoved) self.onMoved(_dragged);
     _dragged = nil;
+}
+
+#pragma mark - Panning
+
+// The empty background (left button) or anything (middle button) can be grabbed to move the view.
+- (void)otherMouseDown:(NSEvent *)event {
+    if (event.buttonNumber == 2) [self beginPan:event];
+    else [super otherMouseDown:event];
+}
+
+- (void)otherMouseDragged:(NSEvent *)event {
+    if (_panning) [self panTo:event];
+    else [super otherMouseDragged:event];
+}
+
+- (void)otherMouseUp:(NSEvent *)event {
+    if (_panning) [self endPan:event];
+    else [super otherMouseUp:event];
+}
+
+- (void)beginPan:(NSEvent *)event {
+    _panning = YES;
+    _panStart = event.locationInWindow;
+    _panOrigin = self.enclosingScrollView.contentView.bounds.origin;
+    [NSCursor.closedHandCursor set];
+}
+
+- (void)panTo:(NSEvent *)event {
+    NSScrollView *scroll = self.enclosingScrollView;
+    NSClipView *clip = scroll.contentView;
+    NSPoint p = event.locationInWindow;
+    CGFloat zoom = scroll.magnification;
+    // the document follows the mouse; the view is flipped, window coordinates aren't
+    NSRect bounds = clip.bounds;
+    bounds.origin = NSMakePoint(_panOrigin.x - (p.x - _panStart.x) / zoom, _panOrigin.y + (p.y - _panStart.y) / zoom);
+    [clip scrollToPoint:[clip constrainBoundsRect:bounds].origin];
+    [scroll reflectScrolledClipView:clip];
+}
+
+- (void)endPan:(NSEvent *)event {
+    _panning = NO;
+    [self updateCursor:event];
+}
+
+// An open hand over the background says it can be grabbed.
+- (void)updateTrackingAreas {
+    [super updateTrackingAreas];
+    for (NSTrackingArea *area in self.trackingAreas) [self removeTrackingArea:area];
+    [self addTrackingArea:[[NSTrackingArea alloc] initWithRect:NSZeroRect
+                                                       options:NSTrackingMouseMoved | NSTrackingCursorUpdate | NSTrackingActiveInKeyWindow | NSTrackingInVisibleRect
+                                                         owner:self userInfo:nil]];
+}
+
+- (void)cursorUpdate:(NSEvent *)event {
+    [self updateCursor:event];
+}
+
+- (void)mouseMoved:(NSEvent *)event {
+    [self updateCursor:event];
+}
+
+- (void)updateCursor:(NSEvent *)event {
+    if (_panning) return;
+    NSPoint p = [self convertPoint:event.locationInWindow fromView:nil];
+    [([self tableAt:p] ? NSCursor.arrowCursor : NSCursor.openHandCursor) set];
 }
 
 - (NSMenu *)menuForEvent:(NSEvent *)event {
@@ -285,6 +355,17 @@ static CGFloat RowY(SchemaTable *t, NSString *column) {
     } else return [super performKeyEquivalent:event];
     [self fitToContent];
     return YES;
+}
+
+// ⌘ + mouse wheel zooms around the cursor; without ⌘ the wheel scrolls as usual.
+- (void)scrollWheel:(NSEvent *)event {
+    NSScrollView *scroll = self.enclosingScrollView;
+    if (!(event.modifierFlags & NSEventModifierFlagCommand) || !scroll) return [super scrollWheel:event];
+    // a wheel notch is about one line; a trackpad reports points
+    CGFloat factor = event.hasPreciseScrollingDeltas ? pow(1.005, event.scrollingDeltaY) : pow(1.1, event.deltaY);
+    CGFloat zoom = MIN(MAX(scroll.magnification * factor, scroll.minMagnification), scroll.maxMagnification);
+    [scroll setMagnification:zoom centeredAtPoint:[self convertPoint:event.locationInWindow fromView:nil]];
+    [self fitToContent];
 }
 
 @end
