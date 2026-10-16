@@ -63,6 +63,8 @@ NSNotificationName const SSHTunnelStatusNotification = @"SSHTunnelStatus";
         @"-o", @"ServerAliveCountMax=3",
         @"-o", @"ConnectTimeout=10",
         @"-o", @"BatchMode=yes", // no password prompts: the app has no terminal
+        @"-o", @"ForwardAgent=no", // the tunnel only forwards a port, whatever ~/.ssh/config says for the host
+        @"-o", @"ForwardX11=no",
         @"--", _sshHost,
     ];
     NSPipe *stderrPipe = [NSPipe pipe];
