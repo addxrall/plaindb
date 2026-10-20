@@ -1,18 +1,18 @@
 APP     = build/PlainDB.app
 BIN     = $(APP)/Contents/MacOS/PlainDB
 PQ      = /opt/homebrew/opt/libpq
-SRC     = $(wildcard src/*.m)
-HDR     = $(wildcard src/*.h)
-RES     = $(wildcard Resources/*.lproj/* Resources/*.icns Resources/*.py)
-GRID_SRC = src/GridView.m src/DatePicker.m src/ImageValue.m src/FileRefs.m src/JSONInspector.m src/SQLText.m src/UI.m src/DBConnection.m # what GridView needs
-CFLAGS  = -fobjc-arc -Wall -Wextra -Wno-unused-parameter -g -O1 -I$(PQ)/include
-LDFLAGS = -framework Cocoa -framework QuartzCore -framework PDFKit -framework Security -framework UniformTypeIdentifiers -L$(PQ)/lib -lpq -lsqlite3
+SRC     = $(wildcard src/*.swift)
+LIB_SRC = $(filter-out src/main.swift,$(SRC)) # everything but the app's entry point, for the tests
+RES     = $(wildcard Resources/*.lproj/* Resources/*.icns Resources/*.py Resources/Fonts/*)
+SWIFTC  = swiftc -swift-version 6 -parse-as-library -I src/CLibPQ -Xcc -I$(PQ)/include
+LDFLAGS = -L$(PQ)/lib -lpq
+TESTS   = schema store tunnel completion diagram file sqlite pg grid date image json sheets connect
 
-$(BIN): $(SRC) $(HDR) $(RES) Info.plist
+$(BIN): $(SRC) src/CLibPQ/* $(RES) Info.plist
 	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources
 	cp Info.plist $(APP)/Contents/Info.plist
 	cp -R Resources/ $(APP)/Contents/Resources/
-	clang $(CFLAGS) $(SRC) $(LDFLAGS) -o $@
+	$(SWIFTC) -module-name PlainDB -O -g $(SRC) $(LDFLAGS) -o $@
 
 run: $(BIN)
 	open $(APP)
@@ -26,39 +26,26 @@ install: $(BIN)
 	$(LSREGISTER) -f /Applications/PlainDB.app
 	@echo "Installed /Applications/PlainDB.app (if the Dock still shows the old icon: killall Dock)"
 
-# pg_test needs a local Postgres; database from PLAINDB_TEST_DB (default: postgres)
-test: tests/*.m tests/*.py $(SRC) $(HDR) $(RES)
-	mkdir -p build
-	clang $(CFLAGS) -Isrc tests/pg_test.m src/PGConnection.m src/DBConnection.m -framework Foundation -L$(PQ)/lib -lpq -o build/pg_test
-	clang $(CFLAGS) -Isrc tests/sqlite_test.m src/SQLiteConnection.m src/RemoteSQLite.m src/FileRefs.m src/DBConnection.m -framework Foundation -lsqlite3 -o build/sqlite_test
-	clang $(CFLAGS) -Isrc tests/grid_test.m $(GRID_SRC) -framework Cocoa -framework PDFKit -o build/grid_test
-	clang $(CFLAGS) -Isrc tests/json_test.m src/JSONInspector.m src/SQLText.m src/UI.m src/DBConnection.m -framework Cocoa -o build/json_test
-	clang $(CFLAGS) -Isrc tests/store_test.m src/ConnectionStore.m -framework Foundation -framework Security -o build/store_test
-	clang $(CFLAGS) -Isrc tests/image_test.m src/ImageValue.m src/FileRefs.m src/UI.m src/DBConnection.m -framework Cocoa -framework PDFKit -o build/image_test
-	clang $(CFLAGS) -Isrc tests/date_test.m src/DatePicker.m src/UI.m src/DBConnection.m -framework Cocoa -o build/date_test
-	clang $(CFLAGS) -Isrc tests/diagram_test.m src/SchemaGraph.m src/DBConnection.m -framework Foundation -o build/diagram_test
-	clang $(CFLAGS) -Isrc tests/tunnel_test.m src/SSHTunnel.m -framework Foundation -o build/tunnel_test
-	clang $(CFLAGS) -Isrc tests/schema_test.m src/DBConnection.m -framework Foundation -o build/schema_test
-	clang $(CFLAGS) -Isrc tests/completion_test.m src/SQLCompletion.m src/SchemaGraph.m src/DBConnection.m -framework Foundation -o build/completion_test
-	clang $(CFLAGS) -Isrc tests/file_test.m src/FileRefs.m src/DBConnection.m -framework Foundation -o build/file_test
-	./build/pg_test
-	./build/sqlite_test
-	./build/grid_test
-	./build/store_test
-	./build/image_test
-	./build/date_test
-	./build/diagram_test
-	./build/tunnel_test
-	./build/schema_test
-	./build/completion_test
-	./build/file_test
-	./build/json_test
+# The app's code once, as a module the tests import with @testable.
+build/kit/libPlainDBKit.a: $(LIB_SRC) src/CLibPQ/*
+	mkdir -p build/kit
+	$(SWIFTC) -module-name PlainDBKit -Onone -g -enable-testing -emit-library -static -emit-module \
+		-emit-module-path build/kit/PlainDBKit.swiftmodule $(LIB_SRC) -o $@
+
+build/%_test: tests/%_test.swift tests/Check.swift build/kit/libPlainDBKit.a
+	$(SWIFTC) -Onone -g -I build/kit -L build/kit -lPlainDBKit $(LDFLAGS) tests/Check.swift $< -o $@
+
+# pg_test needs a local Postgres; database from PLAINDB_TEST_DB (default: postgres). Tests with windows need a login session.
+test: $(TESTS:%=build/%_test)
+	for t in $(TESTS); do ./build/$${t}_test || exit 1; done
 	python3 -I tests/check_strings.py
 
 # Scroll performance of the grid (opens a window for a few seconds; timings depend on the machine)
-perf: tests/perf_grid.m $(SRC) $(HDR)
-	mkdir -p build
-	clang $(CFLAGS) -Isrc tests/perf_grid.m $(GRID_SRC) -framework Cocoa -framework QuartzCore -framework PDFKit -o build/perf_grid
+perf: tests/perf_grid.swift tests/Check.swift $(LIB_SRC) src/CLibPQ/*
+	mkdir -p build/kit-O
+	$(SWIFTC) -module-name PlainDBKit -O -enable-testing -emit-library -static -emit-module \
+		-emit-module-path build/kit-O/PlainDBKit.swiftmodule $(LIB_SRC) -o build/kit-O/libPlainDBKit.a
+	$(SWIFTC) -O -I build/kit-O -L build/kit-O -lPlainDBKit $(LDFLAGS) tests/Check.swift tests/perf_grid.swift -o build/perf_grid
 	./build/perf_grid
 
 clean:

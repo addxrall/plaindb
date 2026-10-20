@@ -64,7 +64,6 @@
 "Connect" = "Połącz";
 "Connecting to %@…" = "Łączę z %@…";
 "Opening tunnel via %@…" = "Otwieram tunel przez %@…";
-"Couldn't connect." = "Nie udało się połączyć.";
 "Remove the connection “%@”?" = "Usunąć połączenie „%@”?";
 "This only removes the saved settings and the password in the Keychain. The database is not touched." = "Usuwa tylko zapisaną konfigurację i hasło z Keychain. Baza zostaje bez zmian.";
 "Remove" = "Usuń";
@@ -72,8 +71,6 @@
 
 /* Main window */
 "%@ via %@" = "%@ przez %@";
-"View" = "Widok";
-"Database" = "Baza";
 "Switch database or connection" = "Przełącz bazę lub połączenie";
 "Databases on %@" = "Bazy na %@";
 "Saved connections" = "Zapisane połączenia";
@@ -106,6 +103,11 @@
 "On delete:" = "Przy usunięciu:";
 "No Action" = "Brak akcji";
 "This SQL will run:" = "Zostanie wykonany ten SQL:";
+"Write to %@?" = "Zapisać w %@?";
+"The changes run in one transaction that is allowed to write. The session goes back to read-only right after." = "Zmiany wykonają się w jednej transakcji, która może zapisywać. Zaraz potem sesja wraca do trybu tylko do odczytu.";
+"Run in Transaction" = "Wykonaj w transakcji";
+"Light / Dark" = "Jasny / ciemny";
+"Nullable" = "Dopuszcza NULL";
 "Fill in the fields above." = "Uzupełnij pola powyżej.";
 "Production: this changes the schema of the production database." = "Produkcja: to zmienia schemat produkcyjnej bazy danych.";
 "Whole Database" = "Cała baza";
@@ -122,12 +124,10 @@
 "SSH tunnel: connected" = "Tunel SSH: połączony";
 "SSH tunnel: dropped, reconnecting…" = "Tunel SSH: zerwany, wznawiam…";
 "Error" = "Błąd";
-"Unknown error" = "Nieznany błąd";
 
 /* Data tab */
 "read-only" = "tylko odczyt";
 "New row" = "Nowy wiersz";
-"Delete row" = "Usuń wiersz";
 "Delete or restore the selected rows (⌫)" = "Usuń lub przywróć zaznaczone wiersze (⌫)";
 "Previous page" = "Poprzednia strona";
 "Next page" = "Następna strona";
@@ -264,7 +264,6 @@
 "Name" = "Nazwa";
 "Type" = "Typ";
 "Default" = "Domyślnie";
-"Definition" = "Definicja";
 "none" = "brak";
 
 /* JSON inspector */
@@ -288,9 +287,6 @@
 "Query error" = "Błąd zapytania";
 
 /* Production confirmation */
-"This changes data on production" = "To zapytanie zmienia dane na produkcji";
-"Check the SQL before running it; this can't be undone." = "Sprawdź SQL przed wykonaniem; tej operacji nie da się cofnąć.";
-"%@ · %@ in one transaction. %@" = "%@ · %@ w jednej transakcji. %@";
 "Execute" = "Wykonaj";
 
 /* Database and SSH errors */
