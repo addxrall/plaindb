@@ -14,7 +14,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshot.png" width="820" alt="PlainDB: an orders table on a production connection, with foreign key badges, boolean checkboxes and a JSON value open in the inspector">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+    <img src="docs/screenshot.png" width="820" alt="PlainDB: an orders table on a production connection, with foreign key badges, boolean checkboxes and a JSON value open in the inspector">
+  </picture>
 </p>
 
 PlainDB is written in Swift and AppKit, with no Electron and no web views. It's for quickly looking at what a database contains and fixing a value here and there: follow a foreign key to the row it points to, tick a boolean, pick a date from a calendar, edit a JSON value in a side panel, see the whole schema as a diagram. It opens Postgres servers, SQLite files and PocketBase's `data.db`, keeps several tables open in native tabs, and completes table and column names as you type SQL. Everything runs locally: no accounts, no cloud. Production connections are read-only until you confirm a write, and they are framed in a colour you pick, so you always know where you are.
@@ -59,7 +62,10 @@ PlainDB is written in Swift and AppKit, with no Electron and no web views. It's 
 ### Diagram
 
 <p align="center">
-  <img src="docs/diagram.png" width="820" alt="PlainDB's Diagram tab: six tables of an insurance database with their columns and foreign key arrows, the claims table selected">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/diagram-dark.png">
+    <img src="docs/diagram.png" width="820" alt="PlainDB's Diagram tab: six tables of an insurance database with their columns and foreign key arrows, the claims table selected">
+  </picture>
 </p>
 
 - Every table with its columns and foreign key arrows, referenced tables on the left. "Show on Diagram" in the sidebar (or a double-click on a box) shows just a table and its neighbours.
