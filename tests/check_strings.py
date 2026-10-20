@@ -1,7 +1,7 @@
 """Every UI string in src/ must be translated, with matching format specifiers.
 
-L(@"...")  -> Resources/pl.lproj/Localizable.strings
-LN(@"...") -> Resources/{en,pl}.lproj/Localizable.stringsdict
+L("...")  -> Resources/pl.lproj/Localizable.strings
+LN("...") -> Resources/{en,pl}.lproj/Localizable.stringsdict
 """
 import glob
 import json
@@ -16,8 +16,8 @@ SPEC = re.compile(r'%(?:\d+\$)?(?:l?[du]|@|\.0f|%)')
 
 def source_keys(macro):
     keys = set()
-    for path in glob.glob('src/*.[mh]'):
-        keys |= set(re.findall(r'\b' + macro + r'\(@' + KEY, open(path, encoding='utf-8').read()))
+    for path in glob.glob('src/*.swift'):
+        keys |= set(re.findall(r'\b' + macro + r'\(' + KEY, open(path, encoding='utf-8').read()))
     return {k.replace('\\"', '"') for k in keys}
 
 

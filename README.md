@@ -10,14 +10,14 @@
 </p>
 
 <p align="center">
-  macOS · Objective-C / AppKit · PostgreSQL · SQLite · PocketBase · English &amp; Polish · MIT License
+  macOS · Swift / AppKit · PostgreSQL · SQLite · PocketBase · English &amp; Polish · MIT License
 </p>
 
 <p align="center">
   <img src="docs/screenshot.png" width="820" alt="PlainDB: an orders table on a production connection, with foreign key badges, boolean checkboxes and a JSON value open in the inspector">
 </p>
 
-PlainDB is written in Objective-C and AppKit, with no Electron and no web views. It's for quickly looking at what a database contains and fixing a value here and there: follow a foreign key to the row it points to, tick a boolean, pick a date from a calendar, edit a JSON value in a side panel, see the whole schema as a diagram. It opens Postgres servers, SQLite files and PocketBase's `data.db`, keeps several tables open in native tabs, and completes table and column names as you type SQL. Everything runs locally: no accounts, no cloud. Production connections are read-only until you confirm a write, and they are framed in a colour you pick, so you always know where you are.
+PlainDB is written in Swift and AppKit, with no Electron and no web views. It's for quickly looking at what a database contains and fixing a value here and there: follow a foreign key to the row it points to, tick a boolean, pick a date from a calendar, edit a JSON value in a side panel, see the whole schema as a diagram. It opens Postgres servers, SQLite files and PocketBase's `data.db`, keeps several tables open in native tabs, and completes table and column names as you type SQL. Everything runs locally: no accounts, no cloud. Production connections are read-only until you confirm a write, and they are framed in a colour you pick, so you always know where you are.
 
 ## Features
 
@@ -83,7 +83,7 @@ PlainDB is written in Objective-C and AppKit, with no Electron and no web views.
 
 ## Requirements
 
-- macOS with Xcode or the Command Line Tools
+- macOS with Xcode or the Command Line Tools (Swift 6)
 - `libpq` from Homebrew: `brew install libpq` (SQLite ships with macOS)
 
 ## Building
@@ -92,7 +92,7 @@ PlainDB is written in Objective-C and AppKit, with no Electron and no web views.
 make          # builds build/PlainDB.app
 make run      # builds and opens it
 make install  # builds and installs to /Applications/PlainDB.app
-make test     # Postgres and SQLite layers, grid, diagram, completion and translation checks (PLAINDB_TEST_DB, default: postgres)
+make test     # database layers, grid, inspector, diagram, sheets, windows and translation checks (PLAINDB_TEST_DB, default: postgres)
 make perf     # grid scroll speed, CPU and memory on a big page (opens a window for a few seconds)
 ```
 
@@ -120,7 +120,7 @@ How it stays safe:
 
 ## Translations
 
-UI strings are written in English in the code (`L(@"…")`, plurals with `LN(@"%lu rows", n)`). Polish lives in `Resources/pl.lproj/Localizable.strings` and `Localizable.stringsdict`. `make test` fails when a string is missing, unused, or its format specifiers don't match.
+UI strings are written in English in the code (`L("…")`, plurals with `LN("%lu rows", n)`). Polish lives in `Resources/pl.lproj/Localizable.strings` and `Localizable.stringsdict`. `make test` fails when a string is missing, unused, or its format specifiers don't match.
 
 ## Known limitations
 

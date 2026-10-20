@@ -1,5 +1,19 @@
 # Decisions
 
+## 2026-10-20 · Swift 6, and design 2a "Soft Glass"
+
+**Context:** the user wanted the app in Swift, together with a new look from Claude Design (direction 2a: rounded floating panels on a soft background, one indigo accent, a roomier grid, spring motion; handoff in Claude Design, project "PlainDB", `design_handoff_plaindb_2a`).
+**Decision:** a full rewrite in Swift 6 with strict concurrency, still AppKit with the UI in code and a `Makefile` (`swiftc`), no Xcode project. Behaviour stays as it was; only the presentation follows the design. Values are a `DBValue` enum instead of `NSString`/`NSNull` (SQLite's storage classes are cases instead of an `NSString` subclass), connection info is a `Codable` `Connection` struct that reads the plists of earlier versions, errors are thrown. libpq is imported through a module map. Tests link against the app's code built once as a library.
+**What the design changed:**
+- the window: no split view and no toolbar items; three panels (sidebar, content, inspector) on the window background, the top row (connection pill, sliding tabs, PRODUCTION) in the title bar's area, the traffic lights in the sidebar's first row;
+- the sidebar selection is one pill sliding between rows; the tabs and the inspector's Tree / Text have a sliding thumb;
+- the grid: 34 pt rounded rows inset from the panel, Geist Mono, sort ascending → descending → off;
+- Structure as cards instead of grids; the diagram on a dot grid, Reset Layout springs back;
+- the JSON inspector is its own panel animating its width; the foreign key preview is a card (`CardPopover`), not an `NSPopover`;
+- the production confirmation is drawn over the window (scrim, the SQL, Run in Transaction) instead of an `NSAlert`, and a toast reports the saved rows; the production frame is 2 pt;
+- a light / dark button in the window, remembered; Reduce Motion turns the motion into short fades.
+**Consequences:** the Connections and Settings windows weren't in the design; they keep their layout in the same visual language. Supersedes "Objective-C, AppKit, UI in code, Makefile" (2026-10-15) and the window parts of "Design from Claude Design, mapped to native AppKit".
+
 ## 2026-10-15 · Objective-C, AppKit, UI in code, Makefile
 
 **Context:** a tool for one person on one Mac. It should be simple and pleasant to use.
